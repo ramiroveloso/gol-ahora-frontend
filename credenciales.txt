@@ -1,0 +1,35 @@
+========================================================================
+                      CREDENCIALES DE PRUEBA - GOL AHORA
+========================================================================
+
+Aquí tienes las cuentas de prueba sembradas automáticamente en la base de datos
+para validar las distintas vistas y tareas asociadas a cada rol:
+
+1. ROL: CLIENTE (Demo)
+   ------------------------------------------------------------
+   Correo Electrónico: demo@golahora.com
+   Contraseña:         123456
+   Permite:            Reservar canchas y seguir torneos activos.
+
+2. ROL: PROFESIONAL (Pro)
+   ------------------------------------------------------------
+   Correo Electrónico: profesional@gol.com
+   Contraseña:         123
+   Permite:            Pasar asistencia de los alumnos inscritos.
+
+3. ROL: ADMINISTRADOR (Admin)
+   ------------------------------------------------------------
+   Correo Electrónico: admin@gol.com
+   Contraseña:         123
+   Permite:            Dar de baja cuentas con borrado en cascada.
+
+4. CUENTA DE PRUEBA ULTRA-SIMPLE
+   ------------------------------------------------------------
+   Correo Electrónico: a@a.com
+   Contraseña:         1
+   Permite:            Acceso rápido al perfil de cliente por defecto.
+
+========================================================================
+* Recuerda que también puedes registrar nuevas cuentas directamente desde
+  la pestaña "Registrarse" del formulario en el navegador.
+========================================================================
