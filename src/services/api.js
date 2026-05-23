@@ -1,4 +1,18 @@
-const API_URL = 'http://127.0.0.1:5000/api'
+// ❌ ANTES (Hardcodeado - Rompe en producción):
+// const respuesta = await axios.post("http://127.0.0.1:5000/api/auth/register", datos);
+
+//  AHORA (Dinámico e inteligente):
+// Si existe la variable de Vercel usa Render, sino usa el puerto local de desarrollo
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// Y la petición la hacés usando esa constante y la ruta correcta de tu main.py:
+const respuesta = await fetch(`${API_URL}/api/usuarios`, {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json"
+    },
+    body: JSON.stringify(datos)
+});
 
 // Base request wrapper that injects JWT token
 async function request(endpoint, options = {}) {
