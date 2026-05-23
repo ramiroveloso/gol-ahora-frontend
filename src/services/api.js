@@ -3,7 +3,7 @@
 
 //  AHORA (Dinámico e inteligente):
 // Si existe la variable de Vercel usa Render, sino usa el puerto local de desarrollo
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL;
 
 // Y la petición la hacés usando esa constante y la ruta correcta de tu main.py:
 const respuesta = await fetch(`${API_URL}/api/usuarios`, {
