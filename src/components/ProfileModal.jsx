@@ -1,6 +1,42 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
+import { api, isMockMode } from '../services/api.js'
 
-function ProfileModal({ currentUser, isOpen, onClose }) {
+const PROVINCIAS_AR = [
+  'Buenos Aires',
+  'CABA',
+  'Córdoba',
+  'Santa Fe',
+  'Mendoza',
+  'Tucumán',
+  'Otra',
+]
+
+function ProfileModal({ currentUser, isOpen, onClose, onUserUpdate, showToast }) {
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    name: '',
+    telefono: '',
+    direccion: '',
+    localidad: '',
+    provincia: 'Buenos Aires',
+    codigoPostal: '',
+  })
+
+  useEffect(() => {
+    if (currentUser) {
+      setForm({
+        name: currentUser.name || '',
+        telefono: currentUser.telefono || '',
+        direccion: currentUser.direccion || '',
+        localidad: currentUser.localidad || '',
+        provincia: currentUser.provincia || 'Buenos Aires',
+        codigoPostal: currentUser.codigoPostal || '',
+      })
+    }
+    setEditing(false)
+  }, [currentUser, isOpen])
+
   if (!isOpen || !currentUser) return null
 
   const role = currentUser.role || 'cliente'
@@ -17,176 +53,190 @@ function ProfileModal({ currentUser, isOpen, onClose }) {
     return 'Cliente'
   }
 
+  const handleChange = (field) => (e) => {
+    setForm((prev) => ({ ...prev, [field]: e.target.value }))
+  }
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      showToast?.('El nombre es obligatorio', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      const updated = await api.updateProfile({
+        name: form.name.trim(),
+        telefono: form.telefono.trim(),
+        direccion: form.direccion.trim(),
+        localidad: form.localidad.trim(),
+        provincia: form.provincia,
+        codigoPostal: form.codigoPostal.trim(),
+      })
+      onUserUpdate?.(updated)
+      setEditing(false)
+      showToast?.('Perfil actualizado correctamente', 'success')
+    } catch (err) {
+      showToast?.(err.message || 'No se pudo guardar el perfil', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const fieldStyle = {
+    width: '100%',
+    padding: '0.55rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid var(--border-color)',
+    background: 'var(--bg-input)',
+    color: 'var(--text-main)',
+    fontSize: '0.9rem',
+    marginTop: '0.25rem',
+  }
+
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      width: '100vw',
-      height: '100vh',
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      backdropFilter: 'blur(5px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 2000,
-      animation: 'fadeIn 0.25s ease'
-    }} onClick={onClose}>
-      <div 
-        style={{
-          width: '90%',
-          maxWidth: '440px',
-          backgroundColor: 'var(--bg-card)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '16px',
-          padding: '2rem',
-          boxShadow: '0 15px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(218, 25, 60, 0.1)',
-          position: 'relative',
-          animation: 'scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          fontFamily: 'Outfit, sans-serif'
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Close Button */}
-        <button 
-          onClick={onClose}
-          style={{
-            position: 'absolute',
-            top: '1.2rem',
-            right: '1.2rem',
-            backgroundColor: 'transparent',
-            border: 'none',
-            color: 'var(--text-muted)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '0.4rem',
-            borderRadius: '50%',
-            transition: 'all 0.2s'
-          }}
-          className="modal-close-hover"
-          title="Cerrar"
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: '1.3rem' }}>close</span>
+    <div
+      className="profile-modal-overlay"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div className="profile-modal-card" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="profile-modal-close" onClick={onClose} title="Cerrar">
+          <span className="material-symbols-outlined">close</span>
         </button>
 
-        {/* Modal Header & Avatar */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          textAlign: 'center',
-          marginBottom: '2rem',
-          borderBottom: '1px solid var(--border-color)',
-          paddingBottom: '1.5rem'
-        }}>
-          <div style={{
-            width: '80px',
-            height: '80px',
-            borderRadius: '50%',
-            backgroundColor: 'rgba(218, 25, 60, 0.08)',
-            border: '2px solid var(--accent-garnet)',
-            color: 'var(--accent-garnet)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: '1rem',
-            boxShadow: '0 0 15px rgba(218, 25, 60, 0.2)'
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: '3.2rem' }}>account_circle</span>
+        <div className="profile-modal-header">
+          <div className="profile-avatar">
+            <span className="material-symbols-outlined">account_circle</span>
           </div>
-
-          <h3 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0, color: 'var(--text-main)' }}>
-            Mi Perfil
-          </h3>
-          <span style={{
-            fontSize: '0.75rem',
-            color: 'var(--text-muted)',
-            marginTop: '0.2rem'
-          }}>
-            Gol Ahora ID: #{currentUser.id ? currentUser.id.toString().substring(0, 8) : 'GOL-AHO'}
+          <h3>Mi Perfil</h3>
+          <span className="profile-id-hint">
+            {currentUser.email}
+            {isMockMode && ' · guardado en demo local'}
           </span>
         </div>
 
-        {/* Info Rows */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem', marginBottom: '2rem' }}>
-          {/* Row 1: Name */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--text-muted)', fontSize: '1.3rem' }}>person</span>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Nombre Completo</span>
-              <strong style={{ fontSize: '0.95rem', color: 'var(--text-main)' }}>{currentUser.name}</strong>
+        <div className="profile-modal-body">
+          {!editing ? (
+            <>
+              <ProfileRow icon="person" label="Nombre" value={currentUser.name} />
+              <ProfileRow icon="mail" label="Correo" value={currentUser.email} />
+              <ProfileRow icon="phone" label="Teléfono" value={currentUser.telefono || '—'} />
+              <ProfileRow icon="home" label="Dirección" value={currentUser.direccion || '—'} />
+              <ProfileRow
+                icon="location_on"
+                label="Ubicación"
+                value={[currentUser.localidad, currentUser.provincia, currentUser.codigoPostal]
+                  .filter(Boolean)
+                  .join(', ') || '—'}
+              />
+              <ProfileRow
+                icon="badge"
+                label="Rol"
+                value={
+                  <span
+                    className="profile-role-badge"
+                    style={{ borderColor: getRoleBadgeColor(role), color: getRoleBadgeColor(role) }}
+                  >
+                    {getRoleDisplayName(role)}
+                  </span>
+                }
+              />
+              <ProfileRow icon="event" label="Miembro desde" value={currentUser.memberSince || 'Mayo 2026'} />
+            </>
+          ) : (
+            <div className="profile-edit-form">
+              <label>
+                Nombre completo
+                <input style={fieldStyle} value={form.name} onChange={handleChange('name')} />
+              </label>
+              <label>
+                Teléfono
+                <input
+                  style={fieldStyle}
+                  type="tel"
+                  value={form.telefono}
+                  onChange={handleChange('telefono')}
+                  placeholder="11 1234-5678"
+                />
+              </label>
+              <label>
+                Dirección
+                <input
+                  style={fieldStyle}
+                  value={form.direccion}
+                  onChange={handleChange('direccion')}
+                  placeholder="Calle y número"
+                />
+              </label>
+              <label>
+                Localidad
+                <input
+                  style={fieldStyle}
+                  value={form.localidad}
+                  onChange={handleChange('localidad')}
+                  placeholder="Ezpeleta"
+                />
+              </label>
+              <label>
+                Provincia
+                <select style={fieldStyle} value={form.provincia} onChange={handleChange('provincia')}>
+                  {PROVINCIAS_AR.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Código postal
+                <input
+                  style={fieldStyle}
+                  value={form.codigoPostal}
+                  onChange={handleChange('codigoPostal')}
+                  placeholder="1884"
+                />
+              </label>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                El correo no se puede cambiar en modo demo.
+              </p>
             </div>
-          </div>
-
-          {/* Row 2: Email */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--text-muted)', fontSize: '1.3rem' }}>mail</span>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Correo Electrónico</span>
-              <strong style={{ fontSize: '0.95rem', color: 'var(--text-main)', wordBreak: 'break-all' }}>{currentUser.email}</strong>
-            </div>
-          </div>
-
-          {/* Row 3: Role */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--text-muted)', fontSize: '1.3rem' }}>badge</span>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Rol Asignado</span>
-              <span style={{
-                display: 'inline-block',
-                marginTop: '0.2rem',
-                fontSize: '0.7rem',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                padding: '0.15rem 0.5rem',
-                borderRadius: '4px',
-                backgroundColor: 'rgba(255,255,255,0.02)',
-                border: `1px solid ${getRoleBadgeColor(role)}`,
-                color: getRoleBadgeColor(role)
-              }}>
-                {getRoleDisplayName(role)}
-              </span>
-            </div>
-          </div>
-
-          {/* Row 4: Account Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-            <span className="material-symbols-outlined" style={{ color: '#00a000', fontSize: '1.3rem' }}>verified</span>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Estado de Cuenta</span>
-              <strong style={{ fontSize: '0.95rem', color: '#00c864' }}>Verificado / Activo</strong>
-            </div>
-          </div>
-
-          {/* Row 5: Member Since */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-            <span className="material-symbols-outlined" style={{ color: 'var(--text-muted)', fontSize: '1.3rem' }}>event</span>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Miembro Desde</span>
-              <strong style={{ fontSize: '0.95rem', color: 'var(--text-main)' }}>Mayo 2026</strong>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Footer Actions */}
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <button 
-            onClick={onClose}
-            className="btn btn-primary"
-            style={{
-              padding: '0.6rem 2rem',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              width: '100%'
-            }}
-          >
-            Aceptar
-          </button>
+        <div className="profile-modal-footer">
+          {!editing ? (
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => setEditing(true)}>
+                <span className="material-symbols-outlined">edit</span>
+                Editar perfil
+              </button>
+              <button type="button" className="btn btn-primary" onClick={onClose}>
+                Cerrar
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => setEditing(false)} disabled={saving}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </>
+          )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ProfileRow({ icon, label, value }) {
+  return (
+    <div className="profile-row">
+      <span className="material-symbols-outlined">{icon}</span>
+      <div>
+        <span className="profile-row-label">{label}</span>
+        <div className="profile-row-value">{value}</div>
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-function KanbanCard({ booking, onDelete }) {
+function KanbanCard({ booking, onDelete, onConfirmPayment }) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragStart = (e) => {
@@ -67,8 +67,23 @@ function KanbanCard({ booking, onDelete }) {
       
       <div className="card-footer">
         <span className="card-price">${totalPrice.toFixed(2)}</span>
-        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Arrastrar para mover</span>
+        {booking.durationHours > 1 && (
+          <span className="card-duration-tag">{booking.durationHours} h</span>
+        )}
       </div>
+      {booking.status === 'pending' && onConfirmPayment && (
+        <button
+          type="button"
+          className="kanban-pay-btn"
+          onClick={() => onConfirmPayment(booking)}
+        >
+          <span className="material-symbols-outlined">payments</span>
+          Pagar
+        </button>
+      )}
+      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.35rem' }}>
+        Arrastrar para mover de columna
+      </span>
     </div>
   )
 }

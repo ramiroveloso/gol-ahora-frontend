@@ -1,137 +1,190 @@
-// Definimos la URL base usando la variable de entorno de Vercel. 
-// Si no existe (desarrollo local), usa la de Render de respaldo.
-const API_URL = import.meta.env.VITE_API_URL || "https://gol-ahora-backend-1.onrender.com";
+import { mockApi } from './mockApi.js'
 
-// Base request wrapper that injects JWT token
+/** true = datos locales (sin backend). false = API Django/FastAPI real. */
+export const isMockMode = import.meta.env.VITE_USE_MOCK === 'true'
+
+const USE_MOCK = isMockMode
+
+function resolveApiUrl() {
+  const fromEnv = import.meta.env.VITE_API_URL
+  if (fromEnv) return fromEnv.replace(/\/$/, '')
+  if (import.meta.env.DEV) return 'http://127.0.0.1:8000'
+  return 'https://gol-ahora-backend-1.onrender.com'
+}
+
+const API_URL = resolveApiUrl()
+
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('token')
-  
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {})
+    ...(options.headers || {}),
   }
+  if (token) headers.Authorization = `Bearer ${token}`
 
-  // Inject Bearer Authorization header if token is present
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  const config = {
+  const response = await fetch(`${API_URL}${endpoint}`, {
     ...options,
-    headers
-  }
+    headers,
+    credentials: 'include',
+  })
 
-  // Ejecuta la petición unificando la URL base con el endpoint
-  const response = await fetch(`${API_URL}${endpoint}`, config)
-  const data = await response.json()
+  let data = {}
+  try {
+    data = await response.json()
+  } catch {
+    data = {}
+  }
 
   if (!response.ok) {
     const errorMsg = data.detail || data.error || `Error ${response.status} en la petición.`
-    throw new Error(errorMsg)
+    throw new Error(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg))
   }
-
   return data
 }
 
-export const api = {
-  // Authentication methods
+const httpApi = {
   login: async (email, password) => {
-    const data = await request('/auth/login', {
+    const data = await request('/api/auth/login/', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ username: email, password }),
     })
-    
-    if (data.token) {
-      localStorage.setItem('token', data.token)
+    return {
+      name: `${data.first_name || ''} ${data.last_name || ''}`.trim() || data.username,
+      email: data.email,
+      role: mapDjangoRole(data.rol),
     }
-    return data.user
   },
 
-  // CORREGIDO: Apunta al endpoint real /api/usuarios que creamos en tu main.py de FastAPI
-  register: async (name, email, password, role = 'cliente') => {
-    // Como tu formulario viaja estructurado para la tabla de Python:
-    // Mapeamos los datos mínimos que espera el esquema relacional
-    const datosUsuario = {
-      nombre: name.split(' ')[0] || name,
-      apellido: name.split(' ')[1] || ' ',
-      dni: Math.floor(10000000 + Math.random() * 90000000), // Temporal hasta que tu front tenga el input de DNI
-      email: email,
-      telefono: "1100000000",
-      direccion: "Calle Falsa 123",
-      codigopostal: 1884,
-      localidad: "Ezpeleta",
-      provincia: "Buenos Aires",
-      pais: "Argentina",
-      fechaNacimiento: "2000-01-01",
-      nacionalidad: "Argentina",
-      rol: role
-    }
-
-    const data = await request('/api/usuarios', {
+  register: async (data) => {
+    const parts = data.name.trim().split(/\s+/)
+    await request('/api/auth/usuarios/', {
       method: 'POST',
-      body: JSON.stringify(datosUsuario)
+      body: JSON.stringify({
+        username: data.email.split('@')[0],
+        email: data.email,
+        password: data.password,
+        first_name: parts[0] || data.name,
+        last_name: parts.slice(1).join(' ') || '-',
+        rol: mapFrontRoleToDjango(data.role),
+        telefono: data.telefono,
+        direccion: data.direccion,
+      }),
     })
-    
-    if (data.token) {
-      localStorage.setItem('token', data.token)
-    }
-    return data.data
+    return httpApi.login(data.email, data.password)
   },
 
   logout: () => {
     localStorage.removeItem('token')
+    request('/api/auth/logout/', { method: 'POST' }).catch(() => {})
   },
 
   getMe: async () => {
-    const data = await request('/auth/me', {
-      method: 'GET'
-    })
-    return data.user
+    const list = await request('/api/auth/usuarios/')
+    const token = localStorage.getItem('token')
+    const user = Array.isArray(list) ? list[0] : list
+    if (!user) throw new Error('Sesión no válida')
+    return {
+      name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username,
+      email: user.email,
+      role: mapDjangoRole(user.rol),
+    }
   },
 
-  // Bookings CRUD methods
-  getBookings: async () => {
-    return await request('/bookings', {
-      method: 'GET'
-    })
+  getCourts: async () => {
+    const data = await request('/api/fields/canchas/')
+    return Array.isArray(data) ? data.map(mapDjangoCourt) : []
   },
 
-  getOccupiedBookings: async () => {
-    return await request('/bookings/occupied', {
-      method: 'GET'
-    })
+  getProfessors: async () => {
+    const data = await request('/api/auth/profesores/')
+    return Array.isArray(data) ? data.map(mapDjangoProfessor) : []
   },
 
-  createBooking: async (bookingData) => {
-    return await request('/bookings', {
-      method: 'POST',
-      body: JSON.stringify(bookingData)
-    })
-  },
+  getBookings: async () => request('/api/bookings/reservas/'),
 
-  updateBookingStatus: async (id, status) => {
-    return await request(`/bookings/${id}/status`, {
-      method: 'PUT',
-      body: JSON.stringify({ status })
-    })
-  },
+  getOccupiedBookings: async () => request('/api/bookings/reservas/'),
 
-  deleteBooking: async (id) => {
-    return await request(`/bookings/${id}`, {
-      method: 'DELETE'
-    })
-  },
+  createBooking: async (bookingData) =>
+    request('/api/bookings/reservas/', { method: 'POST', body: JSON.stringify(bookingData) }),
 
-  // Admin methods
+  updateBookingStatus: async (id, status) =>
+    request(`/api/bookings/reservas/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify({ estado: status }),
+    }),
+
+  deleteBooking: async (id) => request(`/api/bookings/reservas/${id}/`, { method: 'DELETE' }),
+
   adminGetUsers: async () => {
-    return await request('/admin/users', {
-      method: 'GET'
-    })
+    const data = await request('/api/auth/usuarios/')
+    const list = Array.isArray(data) ? data : data.results || []
+    return list.map(mapDjangoUser)
   },
 
-  adminDeleteUser: async (id) => {
-    return await request(`/admin/users/${id}`, {
-      method: 'DELETE'
-    })
+  adminDeleteUser: async (id) => request(`/api/auth/usuarios/${id}/`, { method: 'DELETE' }),
+
+  updateProfile: async () => {
+    throw new Error('Actualizar perfil requiere backend configurado')
+  },
+
+  processPayment: async () => {
+    throw new Error('Pagos requieren backend finance configurado')
+  },
+
+  getClasses: async () => request('/api/bookings/clases/'),
+
+  saveAttendance: async (classId, students) =>
+    request(`/api/bookings/asistencia/`, {
+      method: 'POST',
+      body: JSON.stringify({ clase_id: classId, alumnos: students }),
+    }),
+}
+
+function mapDjangoRole(rol) {
+  if (rol === 'ADMINISTRADOR') return 'administrador'
+  if (rol === 'PROFESOR') return 'profesional'
+  return 'cliente'
+}
+
+function mapFrontRoleToDjango(role) {
+  if (role === 'administrador') return 'ADMINISTRADOR'
+  if (role === 'profesional') return 'PROFESOR'
+  return 'SOCIO'
+}
+
+function mapDjangoCourt(c) {
+  return {
+    id: String(c.id),
+    name: `Cancha #${c.numero}`,
+    type: c.tipo_cancha?.replace('FUTBOL_', 'Fútbol ') || 'Cancha',
+    turf: c.superficie?.replace(/_/g, ' ') || '',
+    roofed: false,
+    pricePerHour: Number(c.precio_base_hora) || 0,
+    rating: '—',
+    icon: 'stadium',
+    disponible: c.estado_disponibilidad !== false,
   }
 }
+
+function mapDjangoProfessor(p) {
+  return {
+    id: String(p.id),
+    name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || p.username,
+    email: p.email,
+    telefono: p.telefono || '',
+    certificacion: p.certificacion_deportiva || '—',
+    alumnosCount: p.alumnos_count ?? 0,
+    activo: p.activo !== false,
+  }
+}
+
+function mapDjangoUser(u) {
+  return {
+    id: String(u.id),
+    name: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username,
+    email: u.email,
+    role: mapDjangoRole(u.rol),
+  }
+}
+
+export const api = USE_MOCK ? mockApi : httpApi

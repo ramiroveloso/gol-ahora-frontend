@@ -211,7 +211,7 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
-                      backgroundColor: isConfirming ? 'rgba(218, 25, 60, 0.04)' : 'rgba(255, 255, 255, 0.01)',
+                      backgroundColor: isConfirming ? 'rgba(46, 204, 113, 0.04)' : 'rgba(255, 255, 255, 0.01)',
                       border: isConfirming ? '1px solid var(--accent-garnet)' : '1px solid var(--border-color)',
                       borderRadius: '12px',
                       padding: '1rem 1.4rem',
@@ -287,8 +287,8 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
                               padding: '0.4rem 0.8rem',
                               fontSize: '0.75rem',
                               borderRadius: '6px',
-                              backgroundColor: 'rgba(218, 25, 60, 0.05)',
-                              border: '1px solid rgba(218, 25, 60, 0.3)',
+                              backgroundColor: 'rgba(46, 204, 113, 0.05)',
+                              border: '1px solid rgba(46, 204, 113, 0.3)',
                               color: 'var(--accent-garnet)',
                               cursor: 'pointer',
                               display: 'flex',
@@ -309,7 +309,7 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
                       <div style={{
                         marginTop: '1rem',
                         paddingTop: '0.8rem',
-                        borderTop: '1px dashed rgba(218, 25, 60, 0.3)',
+                        borderTop: '1px dashed rgba(46, 204, 113, 0.3)',
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import KanbanCard from './KanbanCard.jsx'
 
-function KanbanColumn({ id, title, indicatorClass, bookings, onDeleteBooking, onUpdateBookingStatus }) {
+function KanbanColumn({ id, title, indicatorClass, bookings, onDeleteBooking, onUpdateBookingStatus, onConfirmPayment }) {
   const [isDragOver, setIsDragOver] = useState(false)
 
   const handleDragOver = (e) => {
@@ -50,6 +50,7 @@ function KanbanColumn({ id, title, indicatorClass, bookings, onDeleteBooking, on
               key={booking.id}
               booking={booking}
               onDelete={onDeleteBooking}
+              onConfirmPayment={id === 'pending' ? onConfirmPayment : undefined}
             />
           ))
         )}

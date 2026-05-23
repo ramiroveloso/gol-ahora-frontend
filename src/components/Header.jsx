@@ -1,4 +1,5 @@
 import React from 'react'
+import { isMockMode } from '../services/api.js'
 
 function Header({ currentUser, onLogout, theme, onToggleTheme, onGoToPortal, onOpenProfile }) {
   return (
@@ -10,6 +11,23 @@ function Header({ currentUser, onLogout, theme, onToggleTheme, onGoToPortal, onO
         </div>
         
         <div className="header-actions">
+          {isMockMode && (
+            <span
+              title="Datos en localStorage — backend pendiente"
+              style={{
+                fontSize: '0.65rem',
+                fontWeight: 600,
+                padding: '0.25rem 0.5rem',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(46, 204, 113, 0.15)',
+                color: '#2ECC71',
+                border: '1px solid rgba(46, 204, 113, 0.35)',
+                letterSpacing: '0.04em',
+              }}
+            >
+              MODO DEMO
+            </span>
+          )}
           {/* Theme toggle button */}
           <button 
             id="theme-toggle" 
@@ -36,7 +54,7 @@ function Header({ currentUser, onLogout, theme, onToggleTheme, onGoToPortal, onO
                   display: 'flex', 
                   alignItems: 'center', 
                   gap: '0.2rem', 
-                  backgroundColor: 'rgba(218, 25, 60, 0.1)', 
+                  backgroundColor: 'rgba(46, 204, 113, 0.1)', 
                   border: '1px solid var(--accent-garnet)', 
                   color: 'var(--text-main)', 
                   borderRadius: '6px',

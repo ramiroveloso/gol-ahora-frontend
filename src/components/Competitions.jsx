@@ -114,7 +114,7 @@ function Competitions({ currentUser, bookings = [], onBackToPortal, onDeleteBook
                     <span className="material-symbols-outlined" style={{
                       color: 'var(--accent-garnet)',
                       fontSize: '1.8rem',
-                      backgroundColor: 'rgba(218, 25, 60, 0.08)',
+                      backgroundColor: 'rgba(46, 204, 113, 0.08)',
                       padding: '0.4rem',
                       borderRadius: '8px'
                     }}>{t.banner}</span>
@@ -215,7 +215,7 @@ function Competitions({ currentUser, bookings = [], onBackToPortal, onDeleteBook
                       textTransform: 'uppercase',
                       padding: '0.15rem 0.4rem',
                       borderRadius: '4px',
-                      backgroundColor: b.status === 'confirmed' ? 'rgba(0, 180, 80, 0.08)' : b.status === 'pending' ? 'rgba(255, 165, 0, 0.08)' : 'rgba(218, 25, 60, 0.08)',
+                      backgroundColor: b.status === 'confirmed' ? 'rgba(0, 180, 80, 0.08)' : b.status === 'pending' ? 'rgba(255, 165, 0, 0.08)' : 'rgba(46, 204, 113, 0.08)',
                       border: b.status === 'confirmed' ? '1px solid rgb(0, 180, 80)' : b.status === 'pending' ? '1px solid orange' : '1px solid var(--accent-garnet)',
                       color: b.status === 'confirmed' ? 'rgb(0, 200, 100)' : b.status === 'pending' ? 'orange' : 'var(--accent-garnet)'
                     }}>
@@ -242,8 +242,8 @@ function Competitions({ currentUser, bookings = [], onBackToPortal, onDeleteBook
                       style={{
                         padding: '0.35rem 0.6rem',
                         fontSize: '0.75rem',
-                        backgroundColor: 'rgba(218, 25, 60, 0.06)',
-                        border: '1px solid rgba(218, 25, 60, 0.3)',
+                        backgroundColor: 'rgba(46, 204, 113, 0.06)',
+                        border: '1px solid rgba(46, 204, 113, 0.3)',
                         color: 'var(--accent-garnet)',
                         borderRadius: '6px',
                         cursor: 'pointer',

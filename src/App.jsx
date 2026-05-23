@@ -9,54 +9,13 @@ import Attendance from './components/Attendance.jsx'
 import Competitions from './components/Competitions.jsx'
 import AdminUsers from './components/AdminUsers.jsx'
 import AdminCalendar from './components/AdminCalendar.jsx'
+import CatalogExplorer from './components/CatalogExplorer.jsx'
 import ProfileModal from './components/ProfileModal.jsx'
+import PaymentModal from './components/PaymentModal.jsx'
 import { api } from './services/api.js'
+import { DEFAULT_COURTS } from './data/catalogDefaults.js'
 
-// ==========================================================================
-// STATIC DATA SYSTEMS
-// ==========================================================================
-export const COURTS = [
-  {
-    id: 'court-1',
-    name: 'Camp Nou Synthetic',
-    type: 'Fútbol 11',
-    turf: 'Césped Sintético',
-    roofed: false,
-    pricePerHour: 45,
-    rating: '4.9',
-    icon: 'sports_soccer'
-  },
-  {
-    id: 'court-2',
-    name: 'Sintética Pro',
-    type: 'Fútbol 7',
-    turf: 'Césped Sintético A1',
-    roofed: false,
-    pricePerHour: 35,
-    rating: '4.8',
-    icon: 'grass'
-  },
-  {
-    id: 'court-3',
-    name: 'La Bombonera Techada',
-    type: 'Fútbol 5',
-    turf: 'Césped Sintético',
-    roofed: true,
-    pricePerHour: 30,
-    rating: '4.7',
-    icon: 'roofing'
-  },
-  {
-    id: 'court-4',
-    name: 'Maracaná Arena',
-    type: 'Fútbol 5',
-    turf: 'Parquet Profesional',
-    roofed: true,
-    pricePerHour: 28,
-    rating: '4.6',
-    icon: 'domain'
-  }
-];
+export const COURTS = DEFAULT_COURTS
 
 export const TIME_SLOTS = [
   "08:00 - 09:00", "09:00 - 10:00", "10:00 - 11:00", "11:00 - 12:00",
@@ -75,6 +34,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [paymentBooking, setPaymentBooking] = useState(null);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   // Sync theme to HTML data-theme attribute
@@ -181,10 +141,23 @@ function App() {
     try {
       const createdBooking = await api.createBooking(bookingData)
       setBookings(prev => [...prev, createdBooking]);
-      showToast('¡Reserva registrada en el servidor!', 'success');
+      showToast('Reserva creada. Completá el pago para confirmarla.', 'success');
     } catch (err) {
       showToast(err.message || 'Error al registrar la reserva', 'error')
     }
+  };
+
+  const handleUserUpdate = (user) => {
+    setCurrentUser(user);
+  };
+
+  const handleRequestPayment = (booking) => {
+    setPaymentBooking(booking);
+  };
+
+  const handlePaymentSuccess = ({ booking }) => {
+    setBookings((prev) => prev.map((b) => (b.id === booking.id ? booking : b)));
+    setPaymentBooking(null);
   };
 
   // Wait loader to prevent Auth flashing while checking session
@@ -238,6 +211,7 @@ function App() {
                 onDeleteBooking={handleDeleteBooking}
                 onUpdateBookingStatus={handleUpdateBookingStatus}
                 onOpenBooking={() => setIsBookingOpen(true)}
+                onRequestPayment={handleRequestPayment}
               />
             )}
             {currentView === 'attendance' && (
@@ -260,6 +234,12 @@ function App() {
                 currentUser={currentUser}
                 onBackToPortal={() => setCurrentView('portal')}
                 onRefreshBookings={handleRefreshBookings}
+                showToast={showToast}
+              />
+            )}
+            {currentView === 'catalog' && (
+              <CatalogExplorer
+                onBackToPortal={() => setCurrentView('portal')}
                 showToast={showToast}
               />
             )}
@@ -291,6 +271,18 @@ function App() {
           currentUser={currentUser}
           isOpen={isProfileOpen}
           onClose={() => setIsProfileOpen(false)}
+          onUserUpdate={handleUserUpdate}
+          showToast={showToast}
+        />
+      )}
+
+      {paymentBooking && currentUser && (
+        <PaymentModal
+          booking={paymentBooking}
+          currentUser={currentUser}
+          onClose={() => setPaymentBooking(null)}
+          onPaymentSuccess={handlePaymentSuccess}
+          showToast={showToast}
         />
       )}
 

@@ -8,7 +8,12 @@ const COLUMNS = [
   { id: 'completed', title: 'Historial', indicatorClass: 'indicator-completed' }
 ]
 
-function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus }) {
+function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequestPayment }) {
+  const handleConfirmPayment = (booking) => {
+    if (onRequestPayment) onRequestPayment(booking)
+    else onUpdateBookingStatus(booking.id, 'confirmed')
+  }
+
   return (
     <div className="kanban-container">
       <div className="kanban-board">
@@ -23,6 +28,7 @@ function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus }) {
               bookings={columnBookings}
               onDeleteBooking={onDeleteBooking}
               onUpdateBookingStatus={onUpdateBookingStatus}
+              onConfirmPayment={handleConfirmPayment}
             />
           )
         })}

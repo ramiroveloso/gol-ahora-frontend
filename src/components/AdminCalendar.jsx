@@ -253,8 +253,8 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
             <button 
               onClick={handleGoToToday}
               style={{
-                background: 'rgba(218, 25, 60, 0.1)',
-                border: '1px solid rgba(218, 25, 60, 0.25)',
+                background: 'rgba(46, 204, 113, 0.1)',
+                border: '1px solid rgba(46, 204, 113, 0.25)',
                 color: 'var(--accent-garnet)',
                 borderRadius: '6px',
                 padding: '0.2rem 0.6rem',
@@ -287,7 +287,7 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
             <span>Disponible / Libre (Haz clic para operar)</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <span style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: 'rgba(218, 25, 60, 0.15)', border: '1px solid var(--accent-garnet)', display: 'inline-block' }} />
+            <span style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: 'rgba(46, 204, 113, 0.15)', border: '1px solid var(--accent-garnet)', display: 'inline-block' }} />
             <span>En Mantenimiento</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -372,7 +372,7 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
                           <div 
                             onClick={() => handleCellClick(court, slot, booking)}
                             style={{
-                              backgroundColor: 'rgba(218, 25, 60, 0.12)',
+                              backgroundColor: 'rgba(46, 204, 113, 0.12)',
                               border: '1.5px solid var(--accent-garnet)',
                               borderRadius: '10px',
                               padding: '0.7rem',
@@ -383,13 +383,13 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
                               gap: '0.2rem',
                               color: 'var(--accent-garnet)',
                               transition: 'transform 0.2s, box-shadow 0.2s',
-                              boxShadow: '0 4px 12px rgba(218, 25, 60, 0.08)'
+                              boxShadow: '0 4px 12px rgba(46, 204, 113, 0.08)'
                             }}
                             className="admin-calendar-block"
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: '1.2rem', color: 'var(--accent-garnet)' }}>warning</span>
                             <span style={{ fontWeight: '700', fontSize: '0.8rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>En Mantenimiento</span>
-                            <span style={{ fontSize: '0.7rem', color: 'rgba(218, 25, 60, 0.75)' }}>Liberar Cancha</span>
+                            <span style={{ fontSize: '0.7rem', color: 'rgba(46, 204, 113, 0.75)' }}>Liberar Cancha</span>
                           </div>
                         ) : isBooked ? (
                           /* CLIENT BOOKING */
@@ -548,7 +548,7 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
                 className="btn"
                 style={{
                   width: '100%',
-                  backgroundColor: 'rgba(218, 25, 60, 0.1)',
+                  backgroundColor: 'rgba(46, 204, 113, 0.1)',
                   border: '1px solid var(--accent-garnet)',
                   color: 'var(--accent-garnet)',
                   padding: '0.5rem',
@@ -613,8 +613,8 @@ function AdminCalendar({ bookings, onAddBooking, onDeleteBooking, onBackToPortal
                 <div style={{
                   marginTop: '0.5rem',
                   padding: '0.6rem 0.8rem',
-                  backgroundColor: 'rgba(218, 25, 60, 0.08)',
-                  border: '1px solid rgba(218, 25, 60, 0.25)',
+                  backgroundColor: 'rgba(46, 204, 113, 0.08)',
+                  border: '1px solid rgba(46, 204, 113, 0.25)',
                   borderRadius: '8px',
                   color: 'var(--accent-garnet)',
                   fontSize: '0.78rem',

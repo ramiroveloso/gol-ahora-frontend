@@ -30,6 +30,15 @@ function Portal({ currentUser, onViewChange }) {
       case 'administrador':
         return [
           {
+            id: 'catalog',
+            title: 'Catálogo (Canchas / Profes / Users)',
+            description: 'Listar canchas, profesores y usuarios sin depender del backend (modo demo).',
+            icon: 'database',
+            target: 'catalog',
+            badge: 'Desarrollo',
+            badgeColor: '#2ECC71',
+          },
+          {
             id: 'admin_users',
             title: 'Gestión de Usuarios',
             description: 'Visualiza, audita o da de baja usuarios. La baja eliminará en cascada todas sus reservas activas.',
@@ -96,8 +105,8 @@ function Portal({ currentUser, onViewChange }) {
     }}>
       {/* Welcome Banner */}
       <div className="portal-welcome-banner" style={{
-        background: 'linear-gradient(135deg, rgba(218, 25, 60, 0.15) 0%, rgba(20, 20, 24, 0.95) 100%)',
-        border: '1px solid rgba(218, 25, 60, 0.25)',
+        background: 'linear-gradient(135deg, rgba(46, 204, 113, 0.15) 0%, rgba(20, 20, 24, 0.95) 100%)',
+        border: '1px solid rgba(46, 204, 113, 0.25)',
         borderRadius: '16px',
         padding: '2.5rem',
         marginBottom: '2.5rem',
