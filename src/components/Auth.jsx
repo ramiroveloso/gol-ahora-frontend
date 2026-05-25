@@ -63,7 +63,7 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
       showToast(err, 'error')
       return
     }
-    setRegisterStep((s) => Math.min(3, s + 1))
+    setRegisterStep((s) => Math.min(2, s + 1))
   }
 
   const handleRegisterSubmit = async (e) => {
@@ -191,13 +191,13 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
 
         {/* Formulario de Registro por Pasos */}
         {activeTab === 'register' && (
-          <form className="auth-form" onSubmit={registerStep === 3 ? handleRegisterSubmit : (e) => e.preventDefault()}>
+          <form className="auth-form" onSubmit={registerStep === 2 ? handleRegisterSubmit : (e) => e.preventDefault()}>
             {/* Pasos */}
             <div className="register-steps">
-              {[1, 2, 3].map((n) => (
+              {[1, 2].map((n) => (
                 <div key={n} className={`register-step-dot ${registerStep >= n ? 'done' : ''} ${registerStep === n ? 'current' : ''}`}>
                   <span>{n}</span>
-                  <small>{n === 1 ? 'Cuenta' : n === 2 ? 'Ubicación' : 'Rol'}</small>
+                  <small>{n === 1 ? 'Cuenta' : 'Ubicación'}</small>
                 </div>
               ))}
             </div>
@@ -365,36 +365,6 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
               </div>
             )}
 
-            {/* Paso 3 */}
-            {registerStep === 3 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Selección de Rol</h3>
-                
-                <div className="role-cards">
-                  {[
-                    { value: 'cliente', title: 'Socio / Cliente', desc: 'Reserva tus canchas preferidas.', icon: 'sports_soccer' },
-                    { value: 'profesional', title: 'Entrenador', desc: 'Gestiona entrenamientos y clases.', icon: 'school' },
-                    { value: 'administrador', title: 'Administrador', desc: 'Administra canchas y reportes.', icon: 'admin_panel_settings' },
-                  ].map((r) => (
-                    <div 
-                      key={r.value} 
-                      className={`role-card ${register.role === r.value ? 'selected' : ''}`}
-                      onClick={() => setRegister((prev) => ({ ...prev, role: r.value }))}
-                    >
-                      <span className="material-symbols-outlined role-icon">{r.icon}</span>
-                      <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                        <strong>{r.title}</strong>
-                        <span>{r.desc}</span>
-                      </div>
-                      {register.role === r.value && (
-                        <span className="material-symbols-outlined" style={{ color: '#2ECC71' }}>check_circle</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Navegación del Registro */}
             <div className="register-nav" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               {registerStep > 1 && (
@@ -406,7 +376,7 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
                   Atrás
                 </button>
               )}
-              {registerStep < 3 ? (
+              {registerStep < 2 ? (
                 <button 
                   type="button" 
                   className="btn btn-primary" 

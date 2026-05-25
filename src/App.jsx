@@ -14,30 +14,32 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  // Session validation on startup
+  // Initialization and Session validation on startup
   useEffect(() => {
-    const fetchSession = async () => {
-      const token = localStorage.getItem('token')
-      if (token) {
-        try {
-          const user = await api.getMe()
-          setCurrentUser(user)
-          showToast(`Bienvenido de vuelta, ${user.name}!`, 'success')
-        } catch (err) {
-          // Token expired or invalid
-          api.logout()
-          setCurrentUser(null)
+    const initApp = async () => {
+      // Fetch CSRF token for subsequent POST requests
+      await api.fetchCsrfToken();
+
+      // Check if session exists on the backend
+      try {
+        const user = await api.getMe();
+        if (user) {
+          setCurrentUser(user);
         }
+      } catch (err) {
+        // No active session, ignore
+        setCurrentUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false)
-    }
-    fetchSession()
+    };
+    initApp();
   }, []);
 
   const showToast = (message, type = 'success') => {
     const id = Date.now();
     setToasts((prev) => [...prev, { id, message, type }]);
-    
+
     // Auto remove after 4 seconds
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -95,19 +97,19 @@ function App() {
     <>
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {!currentUser ? (
-          <Auth 
-            onLoginSuccess={handleLogin} 
-            showToast={showToast} 
-            theme={theme} 
-            onToggleTheme={handleToggleTheme} 
+          <Auth
+            onLoginSuccess={handleLogin}
+            showToast={showToast}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
           />
         ) : (
           <section className="auth-section">
             {/* Theme Toggle is also active in success view! */}
-            <button 
-              type="button" 
-              className="auth-theme-toggle" 
-              onClick={handleToggleTheme} 
+            <button
+              type="button"
+              className="auth-theme-toggle"
+              onClick={handleToggleTheme}
               title="Cambiar Tema"
               aria-label="Cambiar Tema"
             >
@@ -119,7 +121,7 @@ function App() {
             <div className="auth-card success-screen">
               <span className="material-symbols-outlined success-icon">check_circle</span>
               <h1>¡SESIÓN INICIADA!</h1>
-              
+
               <div style={{ textAlign: 'center', margin: '0.5rem 0 1.5rem', lineHeight: '1.6' }}>
                 <p style={{ fontWeight: '600', fontSize: '1.1rem', color: '#2ECC71' }}>
                   {currentUser.name}
@@ -142,8 +144,8 @@ function App() {
                 )}
               </div>
 
-              <button 
-                onClick={handleLogout} 
+              <button
+                onClick={handleLogout}
                 className="btn btn-outline btn-full"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
               >

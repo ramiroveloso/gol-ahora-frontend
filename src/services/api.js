@@ -1,32 +1,62 @@
-const API_URL = import.meta.env.VITE_API_URL || "https://gol-ahora-backend-1.onrender.com/api";
+const PROTOCOL = import.meta.env.VITE_API_PROTOCOL || "http";
+const DOMAIN = import.meta.env.VITE_API_DOMAIN || "localhost";
+const PORT = import.meta.env.VITE_API_PORT || "8000";
+const API_URL = import.meta.env.VITE_API_URL || `${PROTOCOL}://${DOMAIN}:${PORT}/api`;
 
 export const isMockMode = false;
+// Obtener el valor de la cookie CSRF
+function getCsrfToken() {
+  const name = 'csrftoken';
+  if (!document.cookie || document.cookie === '') {
+    return null;
+  }
+  const cookies = document.cookie.split(';');
+  for (let i = 0; i < cookies.length; i++) {
+    const cookie = cookies[i].trim();
+    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+      return decodeURIComponent(cookie.substring(name.length + 1));
+    }
+  }
+  return null;
+}
 
-// Base request wrapper optimized for Django REST Framework
+// Base request wrapper optimized for Django REST Framework con Sesiones
 async function request(endpoint, options = {}) {
-  const token = localStorage.getItem('token');
-  
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {})
   };
 
-  if (token) {
-    headers['Authorization'] = `Token ${token}`;
+  // Inyectar token CSRF para peticiones inseguras
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRFToken'] = csrfToken;
+    }
   }
 
   const config = {
     ...options,
-    headers
+    headers,
+    credentials: 'include' // Obligatorio para enviar la cookie de sesión y csrftoken
   };
 
   const response = await fetch(`${API_URL}${endpoint}`, config);
-  
+
   const isNoContent = response.status === 204;
-  const data = isNoContent ? {} : await response.json();
+  let data = {};
+
+  if (!isNoContent) {
+    try {
+      data = await response.json();
+    } catch (err) {
+      data = { detail: "La respuesta no es JSON válido" };
+    }
+  }
 
   if (!response.ok) {
-    const errorMsg = data.detail || JSON.stringify(data) || `Error ${response.status} en la petición.`;
+    const errorMsg = data.detail || (typeof data === 'object' ? JSON.stringify(data) : data) || `Error ${response.status} en la petición.`;
     throw new Error(errorMsg);
   }
 
@@ -36,8 +66,7 @@ async function request(endpoint, options = {}) {
 // Helper to format Django User object into React User object
 function formatUser(djangoUser) {
   if (!djangoUser) return null;
-  
-  // Map Django roles ('SOCIO', 'PROFESOR', 'ADMINISTRADOR', 'EMPLEADO') to React roles ('cliente', 'profesional', 'administrador')
+
   let role = 'cliente';
   const djangoRol = (djangoUser.rol || '').toUpperCase();
   if (djangoRol === 'ADMINISTRADOR' || djangoRol === 'EMPLEADO') {
@@ -54,8 +83,8 @@ function formatUser(djangoUser) {
     id: djangoUser.id,
     username: djangoUser.username,
     email: djangoUser.email,
-    name: djangoUser.first_name && djangoUser.last_name 
-      ? `${djangoUser.first_name} ${djangoUser.last_name}` 
+    name: djangoUser.first_name && djangoUser.last_name
+      ? `${djangoUser.first_name} ${djangoUser.last_name}`
       : djangoUser.name || djangoUser.username || djangoUser.email,
     role: role,
     telefono: djangoUser.telefono || '',
@@ -67,25 +96,31 @@ function formatUser(djangoUser) {
 }
 
 export const api = {
+  // Inicializa el token CSRF para asegurar que la cookie esté presente
+  fetchCsrfToken: async () => {
+    try {
+      await request('/auth/csrf/', { method: 'GET' });
+    } catch (error) {
+      console.warn("No se pudo obtener el token CSRF o ya estaba presente", error);
+    }
+  },
+
   // Authentication methods
   login: async (email, password) => {
-    // Django's LoginSerializer expects 'username' and 'password'
     const data = await request('/auth/login/', {
       method: 'POST',
       body: JSON.stringify({ username: email, password })
     });
-    
-    if (data.token) {
-      localStorage.setItem('token', data.token);
-    }
-    
+
+    // Con sesiones no necesitamos guardar el token localmente,
+    // pero si devolvemos el usuario formateado
     const rawUser = data.user || data.data || data;
     const formattedUser = formatUser(rawUser);
-    
+
     if (formattedUser) {
       localStorage.setItem('user_data', JSON.stringify(formattedUser));
     }
-    
+
     return formattedUser;
   },
 
@@ -95,7 +130,6 @@ export const api = {
       details = userData;
     }
 
-    // Map React role to Django rol
     let djangoRol = 'SOCIO';
     if (details.role === 'administrador') djangoRol = 'ADMINISTRADOR';
     else if (details.role === 'profesional') djangoRol = 'PROFESOR';
@@ -117,14 +151,10 @@ export const api = {
       codigopostal: details.codigoPostal ? parseInt(details.codigoPostal) : 1000
     };
 
-    const data = await request('/auth/register/', {
+    const data = await request('/auth/usuarios/', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
-
-    if (data.token) {
-      localStorage.setItem('token', data.token);
-    }
 
     const rawUser = data.user || data.data || data;
     const formattedUser = formatUser(rawUser);
@@ -136,13 +166,19 @@ export const api = {
     return formattedUser;
   },
 
-  logout: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user_data');
+  logout: async () => {
+    try {
+      await request('/auth/logout/', { method: 'POST' });
+    } catch (err) {
+      console.error("Error durante logout en el backend", err);
+    } finally {
+      localStorage.removeItem('user_data');
+    }
   },
 
   getMe: async () => {
     try {
+      // Con sesiones, este GET validará la cookie sessionid en el servidor
       const data = await request('/auth/me/', {
         method: 'GET'
       });
@@ -153,14 +189,7 @@ export const api = {
       }
       return formattedUser;
     } catch (err) {
-      const cached = localStorage.getItem('user_data');
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch (e) {
-          // Ignore
-        }
-      }
+      localStorage.removeItem('user_data');
       throw err;
     }
   }
