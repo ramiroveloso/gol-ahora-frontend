@@ -29,7 +29,7 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
   const handlePay = async () => {
     setProcessing(true)
     try {
-      const result = await api.processPayment(booking.id, method)
+      const result = await api.processPayment(booking.id, method, booking)
       setReceipt(result.recibo)
       onPaymentSuccess(result)
       showToast?.('Pago aprobado. Reserva confirmada.', 'success')
@@ -41,8 +41,19 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
   }
 
   return (
-    <div className="payment-modal-overlay" onClick={onClose} role="presentation">
-      <div className="payment-modal-card" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="payment-modal-overlay"
+      onClick={onClose}
+      role="presentation"
+      aria-hidden={false}
+    >
+      <div
+        className="payment-modal-card"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="payment-modal-title"
+      >
         <button type="button" className="payment-modal-close" onClick={onClose} aria-label="Cerrar">
           <span className="material-symbols-outlined">close</span>
         </button>
@@ -51,8 +62,8 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
           <>
             <div className="payment-modal-header">
               <span className="material-symbols-outlined payment-icon">payments</span>
-              <h3>Confirmar pago</h3>
-              <p>La reserva pasa a <strong>Confirmada</strong> solo con cobro aprobado (RF-30).</p>
+              <h3 id="payment-modal-title">Confirmar pago</h3>
+              <p>La reserva pasa a <strong>Confirmada</strong> cuando el cobro queda aprobado.</p>
             </div>
 
             <div className="payment-summary">
@@ -105,11 +116,20 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
             <div className="payment-modal-header receipt-header">
               <span className="material-symbols-outlined payment-icon success">check_circle</span>
               <h3>Recibo de pago</h3>
-              <p>Nº {receipt.numero}</p>
+              <p>
+                Recibo Nº {receipt.numero}
+                {receipt.cobroId ? ` · Cobro #${receipt.cobroId}` : ''}
+              </p>
             </div>
 
             <div className="receipt-body">
               <div className="receipt-brand">GOL AHORA</div>
+              {receipt.detalle && (
+                <div className="receipt-line">
+                  <span>Detalle</span>
+                  <span>{receipt.detalle}</span>
+                </div>
+              )}
               <div className="receipt-line">
                 <span>Fecha emisión</span>
                 <span>{new Date(receipt.emitidoEn).toLocaleString('es-AR')}</span>

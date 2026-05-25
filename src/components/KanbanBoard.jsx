@@ -8,7 +8,13 @@ const COLUMNS = [
   { id: 'completed', title: 'Historial', indicatorClass: 'indicator-completed' }
 ]
 
-function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequestPayment }) {
+function KanbanBoard({
+  bookings,
+  onCancelBooking,
+  onDeleteBooking,
+  onUpdateBookingStatus,
+  onRequestPayment,
+}) {
   const handleConfirmPayment = (booking) => {
     if (onRequestPayment) onRequestPayment(booking)
     else onUpdateBookingStatus(booking.id, 'confirmed')
@@ -18,7 +24,10 @@ function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus, onReque
     <div className="kanban-container">
       <div className="kanban-board">
         {COLUMNS.map(col => {
-          const columnBookings = bookings.filter(b => b.status === col.id)
+          const columnBookings =
+            col.id === 'completed'
+              ? bookings.filter((b) => b.status === 'completed' || b.status === 'cancelled')
+              : bookings.filter((b) => b.status === col.id)
           return (
             <KanbanColumn 
               key={col.id}
@@ -26,6 +35,7 @@ function KanbanBoard({ bookings, onDeleteBooking, onUpdateBookingStatus, onReque
               title={col.title}
               indicatorClass={col.indicatorClass}
               bookings={columnBookings}
+              onCancelBooking={onCancelBooking}
               onDeleteBooking={onDeleteBooking}
               onUpdateBookingStatus={onUpdateBookingStatus}
               onConfirmPayment={handleConfirmPayment}

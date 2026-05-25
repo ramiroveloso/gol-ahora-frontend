@@ -9,6 +9,15 @@ import {
   formatTimeRange,
 } from '../utils/bookingRules.js'
 
+const COURT_TYPE_FILTERS = [
+  { value: '', label: 'Todos los deportes' },
+  { value: 'FUTBOL_5', label: 'Fútbol 5' },
+  { value: 'FUTBOL_7', label: 'Fútbol 7' },
+  { value: 'FUTBOL_11', label: 'Fútbol 11' },
+  { value: 'PADDLE', label: 'Paddle' },
+  { value: 'TENIS', label: 'Tenis' },
+]
+
 function getSlotsOccupiedByBooking(booking, timeSlots) {
   const hours = booking.durationHours || 1
   const startPart = booking.time?.split(' - ')[0]
@@ -27,6 +36,31 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
   const [isClosing, setIsClosing] = useState(false)
   const [occupiedSlots, setOccupiedSlots] = useState([])
   const [extras, setExtras] = useState({ referee: false, ball: false, lights: false, bibs: false })
+  const [tipoCanchaFilter, setTipoCanchaFilter] = useState('')
+  const [filteredCourts, setFilteredCourts] = useState(courts)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const list = await api.getCourts(
+          tipoCanchaFilter ? { tipo_cancha: tipoCanchaFilter } : {},
+        )
+        if (!cancelled) {
+          setFilteredCourts(list.length ? list : courts)
+          if (list.length && !list.find((c) => c.id === selectedCourtId)) {
+            setSelectedCourtId(list[0].id)
+          }
+        }
+      } catch {
+        if (!cancelled) setFilteredCourts(courts)
+      }
+    }
+    if (isOpen) load()
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, tipoCanchaFilter, courts])
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -38,7 +72,7 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
   useEffect(() => {
     const fetchOccupied = async () => {
       try {
-        const data = await api.getOccupiedBookings()
+        const data = await api.getOccupiedBookings(selectedDate)
         setOccupiedSlots(data)
       } catch (err) {
         console.error('Error fetching occupied slots:', err)
@@ -61,7 +95,7 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
     setTimeout(() => onClose(), 350)
   }
 
-  const selectedCourt = courts.find((c) => c.id === selectedCourtId)
+  const selectedCourt = filteredCourts.find((c) => c.id === selectedCourtId)
   const maxDurationHours = getMaxDurationHours(selectedCourt)
 
   const bookedSlots = useMemo(() => {
@@ -150,9 +184,14 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
         if (e.target.className === 'modal-overlay') handleClose()
       }}
     >
-      <div className={`modal-drawer ${isClosing ? 'closing' : ''}`}>
+      <div
+        className={`modal-drawer ${isClosing ? 'closing' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="booking-drawer-title"
+      >
         <div className="modal-header">
-          <h3>Nueva Reserva de Cancha</h3>
+          <h3 id="booking-drawer-title">Nueva Reserva de Cancha</h3>
           <button type="button" className="icon-btn" onClick={handleClose} aria-label="Cerrar modal">
             <span className="material-symbols-outlined">close</span>
           </button>
@@ -162,8 +201,29 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
           <div className="booking-step">
             <span className="step-num">Paso 1 de 3</span>
             <h4>Selecciona la Cancha</h4>
+            <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+              <label htmlFor="court-type-filter">Filtrar por deporte</label>
+              <select
+                id="court-type-filter"
+                value={tipoCanchaFilter}
+                onChange={(e) => setTipoCanchaFilter(e.target.value)}
+                className="bookings-sort-select"
+                style={{ width: '100%' }}
+              >
+                {COURT_TYPE_FILTERS.map((o) => (
+                  <option key={o.value || 'all'} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="court-selector-grid">
-              {courts.filter((c) => c.disponible !== false).map((court) => (
+              {filteredCourts.filter((c) => c.disponible !== false).length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', gridColumn: '1 / -1' }}>
+                  No hay canchas para ese filtro.
+                </p>
+              ) : null}
+              {filteredCourts.filter((c) => c.disponible !== false).map((court) => (
                 <div
                   className={`selectable-court-card ${selectedCourtId === court.id ? 'selected' : ''}`}
                   key={court.id}

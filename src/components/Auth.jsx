@@ -152,14 +152,14 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
         {activeTab === 'login' && (
           <form className="auth-form" onSubmit={handleLoginSubmit}>
             <div className="form-group">
-              <label htmlFor="login-email">Usuario o Email</label>
+              <label htmlFor="login-email">Usuario o correo</label>
               <div className="input-wrapper">
                 <span className="material-symbols-outlined input-icon">person</span>
                 <input
                   type="text"
                   id="login-email"
                   required
-                  placeholder="Ej: demo@golahora.com"
+                  placeholder="Ej: profesor o profe@gol.com"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
                   autoComplete="username"

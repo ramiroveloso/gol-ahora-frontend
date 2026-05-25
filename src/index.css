@@ -1429,8 +1429,29 @@ input[type="date"]:focus {
 .booking-status-pill.status-confirmed { background: rgba(168,85,247,0.15); color: #a855f7; }
 .booking-status-pill.status-live { background: rgba(16,185,129,0.15); color: #10b981; }
 .booking-status-pill.status-completed { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.booking-status-pill.status-cancelled { background: rgba(239,68,68,0.12); color: #ef4444; }
 .booking-list-side { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
 .booking-list-price { font-size: 1.2rem; font-weight: 800; color: var(--accent-garnet); }
+.booking-list-price-cancelled { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); }
+.card-status-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.2rem 0.45rem;
+    border-radius: 4px;
+    margin-bottom: 0.35rem;
+}
+.card-status-cancelled {
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.card-price-cancelled {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
 .booking-list-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
 .btn-sm { padding: 0.35rem 0.65rem !important; font-size: 0.75rem !important; }
 .btn-outline {

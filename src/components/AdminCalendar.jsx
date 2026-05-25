@@ -1,8 +1,15 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { TIME_SLOTS } from '../App.jsx'
 import { DEFAULT_COURTS } from '../data/catalogDefaults.js'
+import {
+  loadMaintenanceSlots,
+  saveMaintenanceSlots,
+  addMaintenanceSlot,
+  removeMaintenanceSlot,
+  findMaintenanceSlot,
+} from '../utils/maintenanceStorage.js'
 
-function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onAddBooking, onDeleteBooking, onBackToPortal, showToast }) {
+function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onDeleteBooking, onBackToPortal, showToast }) {
   const getTodayDateString = () => {
     const d = new Date()
     return d.toISOString().split('T')[0]
@@ -14,8 +21,12 @@ function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onAddBooking, onDele
   // Modal states
   const [selectedCell, setSelectedCell] = useState(null) // { court, slot }
   const [selectedBooking, setSelectedBooking] = useState(null) // booking object
-  const [clientEmailInput, setClientEmailInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [maintenanceSlots, setMaintenanceSlots] = useState(loadMaintenanceSlots)
+
+  useEffect(() => {
+    saveMaintenanceSlots(maintenanceSlots)
+  }, [maintenanceSlots])
 
   // Navigate dates helpers
   const handlePrevDay = () => {
@@ -37,9 +48,12 @@ function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onAddBooking, onDele
   // Find bookings for the active date
   const bookingsForSelectedDate = bookings.filter(b => b.date === selectedDate)
 
-  // Find booking for specific court and slot
+  const maintenanceForDate = maintenanceSlots.filter((m) => m.date === selectedDate)
+
   const getBookingForCell = (courtId, slot) => {
-    return bookingsForSelectedDate.find(b => b.courtId === courtId && b.time === slot)
+    const maint = findMaintenanceSlot(maintenanceForDate, courtId, selectedDate, slot)
+    if (maint) return maint
+    return bookingsForSelectedDate.find((b) => b.courtId === String(courtId) && b.time === slot)
   }
 
   // Handle cell click
@@ -48,78 +62,40 @@ function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onAddBooking, onDele
       setSelectedBooking(booking)
     } else {
       setSelectedCell({ court, slot })
-      setClientEmailInput('')
     }
   }
 
   // Action: Lock as Maintenance
-  const handleLockMaintenance = async () => {
+  const handleLockMaintenance = () => {
     if (!selectedCell) return
-    setIsSubmitting(true)
-    try {
-      const maintenanceBooking = {
-        courtId: selectedCell.court.id,
-        courtName: selectedCell.court.name,
-        type: selectedCell.court.type,
-        date: selectedDate,
-        time: selectedCell.slot,
-        extras: [],
-        totalPrice: 0,
-        status: 'maintenance',
-        userEmail: 'mantenimiento@golahora.com' // special system email
-      }
-      await onAddBooking(maintenanceBooking)
-      setSelectedCell(null)
-      showToast('Cancha puesta en mantenimiento exitosamente.', 'success')
-    } catch (err) {
-      showToast(err.message || 'Error al aplicar el mantenimiento.', 'error')
-    } finally {
-      setIsSubmitting(false)
-    }
+    setMaintenanceSlots((prev) =>
+      addMaintenanceSlot(
+        prev,
+        selectedCell.court.id,
+        selectedDate,
+        selectedCell.slot,
+        selectedCell.court.name,
+      ),
+    )
+    setSelectedCell(null)
+    showToast('Franja bloqueada en mantenimiento (solo en este navegador).', 'success')
   }
 
-  // Action: Quick Reserve for Client
-  const handleQuickReserve = async (e) => {
-    e.preventDefault()
-    if (!selectedCell || !clientEmailInput.trim()) return
-    setIsSubmitting(true)
-    try {
-      const newBooking = {
-        courtId: selectedCell.court.id,
-        courtName: selectedCell.court.name,
-        type: selectedCell.court.type,
-        date: selectedDate,
-        time: selectedCell.slot,
-        extras: [],
-        totalPrice: selectedCell.court.pricePerHour,
-        status: 'confirmed',
-        userEmail: clientEmailInput.trim().toLowerCase()
-      }
-      await onAddBooking(newBooking)
-      setSelectedCell(null)
-      setClientEmailInput('')
-      showToast(`Reserva creada para ${newBooking.userEmail}.`, 'success')
-    } catch (err) {
-      showToast(err.message || 'Error al crear la reserva rápida.', 'error')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Action: Release block / cancel booking
   const handleCancelBooking = async () => {
     if (!selectedBooking) return
     setIsSubmitting(true)
     try {
       const isMaint = selectedBooking.status === 'maintenance'
-      await onDeleteBooking(selectedBooking.id)
+      if (isMaint) {
+        setMaintenanceSlots((prev) =>
+          removeMaintenanceSlot(prev, selectedBooking.courtId, selectedDate, selectedBooking.time),
+        )
+        showToast('Cancha liberada de mantenimiento.', 'info')
+      } else {
+        await onDeleteBooking(selectedBooking.id)
+        showToast('Reserva eliminada del sistema.', 'info')
+      }
       setSelectedBooking(null)
-      showToast(
-        isMaint 
-          ? 'Cancha liberada de mantenimiento.' 
-          : 'Reserva cancelada y removida del sistema.', 
-        'info'
-      )
     } catch (err) {
       showToast(err.message || 'Error al remover la reserva.', 'error')
     } finally {
@@ -499,48 +475,33 @@ function AdminCalendar({ bookings, courts = DEFAULT_COURTS, onAddBooking, onDele
               </p>
             </div>
 
-            {/* Form for quick reserve */}
-            <form onSubmit={handleQuickReserve} style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.2rem' }}>
-              <h4 style={{ margin: '0 0 0.8rem 0', fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-main)' }}>
-                Opción A: Reserva Manual para Cliente
+            <div
+              style={{
+                borderTop: '1px solid var(--border-color)',
+                paddingTop: '1.2rem',
+                marginBottom: '1.2rem',
+                padding: '0.9rem',
+                borderRadius: '8px',
+                backgroundColor: 'rgba(255, 165, 0, 0.06)',
+                border: '1px solid rgba(255, 165, 0, 0.25)',
+              }}
+            >
+              <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                Reserva para otro cliente
               </h4>
-              <div className="form-group" style={{ marginBottom: '1.2rem' }}>
-                <label style={{ fontSize: '0.78rem', marginBottom: '0.3rem', display: 'block' }}>Email del Cliente</label>
-                <input 
-                  type="email" 
-                  required
-                  placeholder="ejemplo@cliente.com"
-                  value={clientEmailInput}
-                  onChange={(e) => setClientEmailInput(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem 0.8rem',
-                    backgroundColor: 'rgba(0,0,0,0.2)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    color: 'var(--text-main)',
-                    fontSize: '0.85rem',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-              <button 
-                type="submit" 
-                disabled={isSubmitting}
-                className="btn btn-primary" 
-                style={{ width: '100%', fontSize: '0.85rem', padding: '0.5rem', borderRadius: '8px', marginBottom: '1.5rem' }}
-              >
-                {isSubmitting ? 'Registrando...' : 'Confirmar Reserva Rápida'}
-              </button>
-            </form>
+              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                No disponible: la API crea reservas solo para el usuario logueado. Cuando el backend
+                acepte <code>usuario</code> en el body, se habilitará la reserva rápida por email.
+              </p>
+            </div>
 
-            {/* Block option */}
             <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '1.2rem' }}>
               <h4 style={{ margin: '0 0 0.6rem 0', fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-main)' }}>
                 Opción B: Bloqueo de Mantenimiento
               </h4>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0 0 1rem 0', lineHeight: '1.4' }}>
-                Deshabilita esta franja horaria para reservas del público bajo la leyenda "En Mantenimiento".
+                Bloqueo visual en este calendario (sessionStorage). No se guarda en el servidor hasta que exista
+                un endpoint de mantenimiento.
               </p>
               <button 
                 type="button"
