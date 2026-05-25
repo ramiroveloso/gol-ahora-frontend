@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { STATUS_LABELS } from '../utils/bookingRules.js'
+import { STATUS_LABELS, bookingBillableAmount, isHistorialStatus } from '../utils/bookingRules.js'
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'Todos' },
@@ -7,9 +7,16 @@ const STATUS_OPTIONS = [
   { value: 'confirmed', label: 'Confirmadas' },
   { value: 'live', label: 'En juego' },
   { value: 'completed', label: 'Finalizadas' },
+  { value: 'cancelled', label: 'Canceladas' },
 ]
 
-function BookingsList({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequestPayment }) {
+function BookingsList({
+  bookings,
+  onCancelBooking,
+  onDeleteBooking,
+  onUpdateBookingStatus,
+  onRequestPayment,
+}) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('date-desc')
@@ -37,7 +44,7 @@ function BookingsList({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequ
   }, [bookings, statusFilter, search, sortBy])
 
   const stats = useMemo(() => {
-    const counts = { pending: 0, confirmed: 0, live: 0, completed: 0 }
+    const counts = { pending: 0, confirmed: 0, live: 0, completed: 0, cancelled: 0 }
     bookings.forEach((b) => {
       if (counts[b.status] !== undefined) counts[b.status]++
     })
@@ -126,7 +133,13 @@ function BookingsList({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequ
                 </div>
               </div>
               <div className="booking-list-side">
-                <span className="booking-list-price">${Number(b.totalPrice || 0).toFixed(2)}</span>
+                {b.status === 'cancelled' ? (
+                  <span className="booking-list-price booking-list-price-cancelled">Sin cargo</span>
+                ) : (
+                  <span className="booking-list-price">
+                    ${bookingBillableAmount(b).toFixed(2)}
+                  </span>
+                )}
                 <div className="booking-list-actions">
                   {b.status === 'pending' && (
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => handlePay(b)}>
@@ -152,15 +165,24 @@ function BookingsList({ bookings, onDeleteBooking, onUpdateBookingStatus, onRequ
                       Finalizar
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="btn btn-danger-outline btn-sm"
-                    onClick={() => {
-                      if (window.confirm('¿Cancelar esta reserva?')) onDeleteBooking(b.id)
-                    }}
-                  >
-                    Cancelar
-                  </button>
+                  {(onCancelBooking || onDeleteBooking) && !isHistorialStatus(b.status) && (
+                    <button
+                      type="button"
+                      className="btn btn-danger-outline btn-sm"
+                      onClick={() => {
+                        if (onCancelBooking) {
+                          if (window.confirm('¿Cancelar esta reserva?')) onCancelBooking(b.id)
+                        } else if (
+                          onDeleteBooking &&
+                          window.confirm('¿Eliminar esta reserva del sistema?')
+                        ) {
+                          onDeleteBooking(b.id)
+                        }
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  )}
                 </div>
               </div>
             </article>

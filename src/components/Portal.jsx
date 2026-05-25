@@ -32,7 +32,7 @@ function Portal({ currentUser, onViewChange }) {
           {
             id: 'catalog',
             title: 'Catálogo (Canchas / Profes / Users)',
-            description: 'Listar canchas, profesores y usuarios sin depender del backend (modo demo).',
+            description: 'Listar canchas, profesores y usuarios desde la API (auth, fields).',
             icon: 'database',
             target: 'catalog',
             badge: 'Desarrollo',
@@ -48,6 +48,15 @@ function Portal({ currentUser, onViewChange }) {
             badgeColor: 'var(--accent-garnet)'
           },
           {
+            id: 'admin_finance',
+            title: 'Historial de Cobros',
+            description: 'Consultá cobros y recibos registrados (cierre de caja).',
+            icon: 'payments',
+            target: 'admin_finance',
+            badge: 'Finanzas',
+            badgeColor: '#2ECC71',
+          },
+          {
             id: 'reservas',
             title: 'Control de Reservas',
             description: 'Supervisa el calendario de canchas en tiempo real y bloquea franjas horarias por mantenimiento.',
@@ -61,15 +70,6 @@ function Portal({ currentUser, onViewChange }) {
       default:
         return [
           {
-            id: 'competitions',
-            title: 'Mis Competiciones',
-            description: 'Consulta los torneos y ligas a las que estás inscripto y sigue tu desempeño.',
-            icon: 'emoji_events',
-            target: 'competitions',
-            badge: 'Mis Torneos',
-            badgeColor: '#00a000'
-          },
-          {
             id: 'reservas',
             title: 'Ver y Reservar Canchas',
             description: 'Agenda un turno en nuestras canchas sintéticas o techadas de última generación.',
@@ -77,6 +77,15 @@ function Portal({ currentUser, onViewChange }) {
             target: 'dashboard',
             badge: 'Reservas rápidas',
             badgeColor: 'var(--accent-garnet)'
+          },
+          {
+            id: 'competitions',
+            title: 'Mis Competiciones',
+            description: 'Consulta los torneos y ligas a las que estás inscripto y sigue tu desempeño.',
+            icon: 'emoji_events',
+            target: 'competitions',
+            badge: 'Mis Torneos',
+            badgeColor: '#00a000'
           }
         ]
     }

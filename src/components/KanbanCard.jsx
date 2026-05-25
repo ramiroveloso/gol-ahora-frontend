@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
+import { STATUS_LABELS } from '../utils/bookingRules.js'
 
-function KanbanCard({ booking, onDelete, onConfirmPayment }) {
+function KanbanCard({ booking, onCancelBooking, onDelete, onConfirmPayment }) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragStart = (e) => {
@@ -20,9 +21,17 @@ function KanbanCard({ booking, onDelete, onConfirmPayment }) {
     formattedDate = dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })
   } catch (e) {}
 
-  const courtName = booking.courtName || booking.court_name || 'Cancha';
-  const totalPrice = typeof booking.totalPrice === 'number' ? booking.totalPrice : (typeof booking.total_price === 'number' ? booking.total_price : 0);
-  const extras = Array.isArray(booking.extras) ? booking.extras : [];
+  const courtName = booking.courtName || booking.court_name || 'Cancha'
+  const isCancelled = booking.status === 'cancelled'
+  const isHistorial = booking.status === 'completed' || isCancelled
+  const totalPrice = isCancelled
+    ? 0
+    : typeof booking.totalPrice === 'number'
+      ? booking.totalPrice
+      : typeof booking.total_price === 'number'
+        ? booking.total_price
+        : 0
+  const extras = Array.isArray(booking.extras) ? booking.extras : []
 
   return (
     <div 
@@ -33,17 +42,24 @@ function KanbanCard({ booking, onDelete, onConfirmPayment }) {
       data-id={booking.id}
     >
       {/* Delete reservation button */}
-      <button 
-        className="card-delete-btn card-action-menu" 
-        onClick={() => {
-          if (window.confirm('¿Estás seguro de que deseas eliminar esta reserva?')) {
-            onDelete(booking.id)
-          }
-        }} 
-        title="Eliminar reserva"
-      >
-        <span className="material-symbols-outlined">delete</span>
-      </button>
+      {(onCancelBooking || onDelete) && !isHistorial && (
+        <button
+          type="button"
+          className="card-delete-btn card-action-menu"
+          onClick={() => {
+            const isCancel = onCancelBooking && !isHistorial
+            const msg = isCancel
+              ? '¿Cancelar esta reserva? (quedará en historial)'
+              : '¿Eliminar esta reserva del sistema?'
+            if (!window.confirm(msg)) return
+            if (isCancel) onCancelBooking(booking.id)
+            else if (onDelete) onDelete(booking.id)
+          }}
+          title={onCancelBooking ? 'Cancelar reserva' : 'Eliminar reserva'}
+        >
+          <span className="material-symbols-outlined">cancel</span>
+        </button>
+      )}
       
       <div className="card-court-name">{courtName}</div>
       
@@ -65,9 +81,18 @@ function KanbanCard({ booking, onDelete, onConfirmPayment }) {
         ))}
       </div>
       
+      {isCancelled && (
+        <span className="card-status-badge card-status-cancelled">
+          {STATUS_LABELS.cancelled}
+        </span>
+      )}
       <div className="card-footer">
-        <span className="card-price">${totalPrice.toFixed(2)}</span>
-        {booking.durationHours > 1 && (
+        {isCancelled ? (
+          <span className="card-price card-price-cancelled">Sin cargo</span>
+        ) : (
+          <span className="card-price">${totalPrice.toFixed(2)}</span>
+        )}
+        {!isCancelled && booking.durationHours > 1 && (
           <span className="card-duration-tag">{booking.durationHours} h</span>
         )}
       </div>
@@ -81,9 +106,11 @@ function KanbanCard({ booking, onDelete, onConfirmPayment }) {
           Pagar
         </button>
       )}
-      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.35rem' }}>
-        Arrastrar para mover de columna
-      </span>
+      {!isHistorial && (
+        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.35rem' }}>
+          Arrastrar para mover de columna
+        </span>
+      )}
     </div>
   )
 }

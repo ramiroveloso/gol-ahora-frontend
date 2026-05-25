@@ -1,32 +1,45 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '../services/api.js'
+import { matchesStudentSearch } from '../utils/bookingRules.js'
 
 function Attendance({ currentUser, onBackToPortal, showToast }) {
   const [classes, setClasses] = useState([])
+  const [professor, setProfessor] = useState(null)
   const [selectedClassId, setSelectedClassId] = useState('')
   const [students, setStudents] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  const instructor = professor || currentUser
+
   useEffect(() => {
     const load = async () => {
       setLoading(true)
       try {
-        const data = await api.getClasses()
-        setClasses(data)
-        if (data.length > 0) {
-          setSelectedClassId(data[0].id)
-          setStudents(data[0].students.map((s) => ({ ...s })))
+        const classPromise =
+          currentUser.role === 'profesional' && currentUser.id
+            ? api.getClasses(currentUser.id)
+            : api.getClasses()
+        const tasks = [classPromise]
+        if (currentUser.role === 'profesional' && currentUser.id) {
+          tasks.push(api.getProfessor(currentUser.id))
+        }
+        const [classData, profData] = await Promise.all(tasks)
+        setClasses(classData)
+        if (profData) setProfessor(profData)
+        if (classData.length > 0) {
+          setSelectedClassId(classData[0].id)
+          setStudents(classData[0].students.map((s) => ({ ...s })))
         }
       } catch (err) {
-        showToast(err.message || 'Error al cargar clases', 'error')
+        showToast(err.message || 'Error al cargar datos', 'error')
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [currentUser.email])
+  }, [currentUser.id, currentUser.role, currentUser.email])
 
   const selectedClass = classes.find((c) => c.id === selectedClassId)
 
@@ -41,11 +54,7 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
     setStudents((prev) => prev.map((s) => (s.id === studentId ? { ...s, present } : s)))
   }
 
-  const filteredStudents = students.filter(
-    (st) =>
-      st.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      st.email.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredStudents = students.filter((st) => matchesStudentSearch(st, searchTerm))
 
   const presentCount = students.filter((s) => s.present).length
   const totalStudents = students.length
@@ -80,11 +89,17 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
     return (
       <div className="attendance-page">
         <button type="button" className="btn btn-outline" onClick={onBackToPortal}>
-          Volver al Portal
+          <span className="material-symbols-outlined">arrow_back</span>
+          Volver
         </button>
-        <p style={{ marginTop: '2rem', color: 'var(--text-muted)' }}>
-          No hay clases asignadas a tu perfil de profesional.
-        </p>
+        <div className="bookings-list-empty" style={{ marginTop: '2rem' }}>
+          <span className="material-symbols-outlined">school</span>
+          <p>
+            {currentUser.role === 'profesional'
+              ? 'No tenés clases asignadas como profesor en el sistema.'
+              : 'No hay clases de entrenamiento cargadas.'}
+          </p>
+        </div>
       </div>
     )
   }
@@ -97,7 +112,12 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
           Volver
         </button>
         <span className="attendance-instructor">
-          Instructor: <strong>{currentUser.name}</strong>
+          Instructor: <strong>{instructor.name}</strong>
+          {professor?.certificacion && professor.certificacion !== '—' && (
+            <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+              Certificación: {professor.certificacion}
+            </span>
+          )}
         </span>
       </div>
 
@@ -107,10 +127,10 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
           <h2>Tomar Asistencia</h2>
         </div>
 
-        {currentUser.certificacionVigente === false && (
+        {instructor.certificacionVigente === false && (
           <div className="attendance-warning">
             <span className="material-symbols-outlined">warning</span>
-            Certificación deportiva no vigente (RF-12). No podrías dictar clases en producción.
+            Certificación deportiva no vigente. No podrías dictar clases en producción.
           </div>
         )}
 
@@ -148,7 +168,7 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
           <span className="material-symbols-outlined">search</span>
           <input
             type="search"
-            placeholder="Buscar alumno..."
+            placeholder="Buscar por nombre o apellido..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -159,7 +179,9 @@ function Attendance({ currentUser, onBackToPortal, showToast }) {
             <div key={student.id} className="attendance-student-row">
               <div>
                 <strong>{student.name}</strong>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{student.email}</div>
+                {student.email ? (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{student.email}</div>
+                ) : null}
               </div>
               <div className="attendance-toggle-group">
                 <button

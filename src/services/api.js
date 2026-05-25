@@ -1,3 +1,6 @@
+import { dateStringToEpochMs } from '../utils/bookingRules.js'
+import { formatApiError } from '../utils/apiErrors.js'
+
 const PROTOCOL = import.meta.env.VITE_API_PROTOCOL || 'http'
 const DOMAIN = import.meta.env.VITE_API_DOMAIN || 'localhost'
 const PORT = import.meta.env.VITE_API_PORT || '8000'
@@ -55,7 +58,7 @@ async function request(endpoint, options = {}) {
       data.error ||
       (typeof data === 'object' ? JSON.stringify(data) : data) ||
       `Error ${response.status} en la petición.`
-    throw new Error(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg))
+    throw new Error(formatApiError({ message: typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg) }))
   }
 
   return data
@@ -101,21 +104,25 @@ function mapFrontStatus(estado) {
   const map = {
     PENDIENTE: 'pending',
     CONFIRMADA: 'confirmed',
-    CANCELADA: 'completed',
+    CANCELADA: 'cancelled',
     COMPLETADA: 'completed',
   }
   return map[estado] || 'pending'
 }
 
+/** Estados del kanban/UI → valores del backend (EstadoEnum). */
 function mapDjangoStatus(status) {
   const map = {
     pending: 'PENDIENTE',
     confirmed: 'CONFIRMADA',
     live: 'CONFIRMADA',
     completed: 'COMPLETADA',
+    cancelled: 'CANCELADA',
   }
   return map[status] || 'PENDIENTE'
 }
+
+const CAMBIAR_ESTADO_PATH = (id) => `/bookings/reservas/${id}/cambiar_estado/`
 
 function msToTimeRange(horaInicio, horaFin) {
   const start = new Date(Number(horaInicio))
@@ -147,9 +154,11 @@ function mapDjangoReserva(r) {
   const dateStr = dateObj.toISOString().split('T')[0]
   const durationMs = Number(r.hora_fin) - Number(r.hora_inicio)
   const durationHours = Math.max(1, Math.round(durationMs / 3600000))
+  const precioHora = Number(r.precio_base_hora ?? r.cancha_precio ?? 0)
 
   return {
     id: String(r.id),
+    userId: String(r.usuario ?? r.usuario?.id ?? ''),
     userEmail: r.usuario_email || r.usuario?.email || '',
     courtId: String(r.cancha),
     courtName: r.cancha_nombre || `Cancha #${r.cancha}`,
@@ -158,8 +167,45 @@ function mapDjangoReserva(r) {
     time: msToTimeRange(r.hora_inicio, r.hora_fin),
     durationHours,
     extras: [],
-    totalPrice: Number(r.monto) || 0,
     status: mapFrontStatus(r.estado),
+    totalPrice:
+      mapFrontStatus(r.estado) === 'cancelled'
+        ? 0
+        : Number(r.monto) || (precioHora ? precioHora * durationHours : 0),
+  }
+}
+
+/** Conserva datos calculados en el front (precio, extras) que Django no devuelve. */
+function mergeBookingFromClient(mapped, source = {}) {
+  if (!source || typeof source !== 'object') return mapped
+  if (mapped.status === 'cancelled') {
+    return { ...mapped, totalPrice: 0 }
+  }
+  return {
+    ...mapped,
+    totalPrice:
+      source.totalPrice != null && source.totalPrice > 0
+        ? Number(source.totalPrice)
+        : mapped.totalPrice,
+    extras: Array.isArray(source.extras) && source.extras.length ? source.extras : mapped.extras,
+    courtName: source.courtName || mapped.courtName,
+    type: source.type || mapped.type,
+    durationHours: source.durationHours ?? mapped.durationHours,
+    userEmail: source.userEmail || mapped.userEmail,
+  }
+}
+
+/** Calcula total desde catálogo de canchas si el backend no envió monto. */
+function enrichBookingPrice(booking, courts = []) {
+  if (booking.totalPrice > 0) return booking
+  const court = courts.find((c) => c.id === String(booking.courtId))
+  if (!court?.pricePerHour) return booking
+  return {
+    ...booking,
+    totalPrice: court.pricePerHour * (booking.durationHours || 1),
+    courtName:
+      booking.courtName?.startsWith('Cancha #') && court.name ? court.name : booking.courtName,
+    type: booking.type === 'Cancha' && court.type ? court.type : booking.type,
   }
 }
 
@@ -167,6 +213,7 @@ function mapDjangoCourt(c) {
   return {
     id: String(c.id),
     name: `Cancha #${c.numero}`,
+    tipoCancha: c.tipo_cancha || '',
     type: c.tipo_cancha?.replace('FUTBOL_', 'Fútbol ') || 'Cancha',
     turf: c.superficie?.replace(/_/g, ' ') || '',
     roofed: false,
@@ -190,17 +237,32 @@ function mapDjangoProfessor(p) {
   }
 }
 
-function mapDjangoClass(clase) {
-  const students = (clase.asistencias || []).map((a) => ({
+function mapStudentFromAsistencia(a) {
+  const firstName = (a.alumno_first_name || '').trim()
+  const lastName = (a.alumno_last_name || '').trim()
+  const fullName =
+    [firstName, lastName].filter(Boolean).join(' ') ||
+    (a.alumno_nombre || '').trim() ||
+    `Alumno ${a.alumno}`
+
+  return {
     id: String(a.alumno ?? a.id),
-    name: a.alumno_nombre || a.nombre || `Alumno ${a.alumno}`,
+    asistenciaId: a.alumno != null ? String(a.id) : null,
+    firstName,
+    lastName,
+    name: fullName,
     email: a.alumno_email || '',
     present: a.estado_asistencia === 'PRESENTE',
-  }))
+  }
+}
+
+function mapDjangoClass(clase) {
+  const students = (clase.asistencias || []).map(mapStudentFromAsistencia)
 
   const horario = new Date(Number(clase.horario))
   return {
     id: String(clase.id),
+    profesorId: String(clase.profesor ?? ''),
     name: clase.tipo_clase?.replace('_', ' ') || `Clase #${clase.id}`,
     schedule: horario.toLocaleString('es-AR', { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
     maxStudents: clase.maximo_alumnos || 0,
@@ -223,10 +285,10 @@ export const api = {
     }
   },
 
-  login: async (email, password) => {
+  login: async (usernameOrEmail, password) => {
     const data = await request('/auth/login/', {
       method: 'POST',
-      body: JSON.stringify({ username: email, password }),
+      body: JSON.stringify({ username: usernameOrEmail, password }),
     })
     const formattedUser = formatUser(data.user || data.data || data)
     if (formattedUser) localStorage.setItem('user_data', JSON.stringify(formattedUser))
@@ -256,7 +318,28 @@ export const api = {
       }),
     })
 
-    return api.login(details.email, details.password)
+    return api.login(details.username || details.email, details.password)
+  },
+
+  /** Actualiza sesión desde GET usuarios/{id}/ (+ profesor si aplica). */
+  refreshSessionUser: async () => {
+    const stored = JSON.parse(localStorage.getItem('user_data') || '{}')
+    if (!stored.id) throw new Error('Sin sesión')
+
+    const data = await request(`/auth/usuarios/${stored.id}/`)
+    let formatted = formatUser(data)
+
+    if (formatted.role === 'profesional') {
+      try {
+        const prof = await api.getProfessor(stored.id)
+        formatted = { ...formatted, ...prof }
+      } catch {
+        /* GET profesores/{id} opcional */
+      }
+    }
+
+    localStorage.setItem('user_data', JSON.stringify(formatted))
+    return formatted
   },
 
   logout: async () => {
@@ -274,15 +357,18 @@ export const api = {
     if (!stored) throw new Error('Sin sesión')
     try {
       await request('/bookings/reservas/', { method: 'GET' })
-      return JSON.parse(stored)
+      return api.refreshSessionUser()
     } catch (err) {
       localStorage.removeItem('user_data')
       throw err
     }
   },
 
-  getCourts: async () => {
-    const data = await request('/fields/canchas/')
+  getCourts: async (filters = {}) => {
+    const params = new URLSearchParams()
+    if (filters.tipo_cancha) params.set('tipo_cancha', filters.tipo_cancha)
+    const qs = params.toString()
+    const data = await request(`/fields/canchas/${qs ? `?${qs}` : ''}`)
     const list = Array.isArray(data) ? data : data.results || []
     return list.map(mapDjangoCourt)
   },
@@ -293,15 +379,70 @@ export const api = {
     return list.map(mapDjangoProfessor)
   },
 
+  /** GET /api/auth/profesores/{id}/ — datos completos del profesor logueado. */
+  getProfessor: async (id) => {
+    const data = await request(`/auth/profesores/${id}/`)
+    const base = formatUser(data)
+    const cert = (data.certificacion_deportiva || '').trim()
+    return {
+      ...base,
+      certificacion: cert || '—',
+      certificacionVigente: Boolean(cert),
+      alumnosCount: data.alumnos_count ?? (Array.isArray(data.alumnos) ? data.alumnos.length : 0),
+    }
+  },
+
   getBookings: async () => {
     const data = await request('/bookings/reservas/')
     const list = Array.isArray(data) ? data : data.results || []
-    return list.map(mapDjangoReserva)
+    let courts = []
+    try {
+      courts = await api.getCourts()
+    } catch {
+      courts = []
+    }
+    return list.map((r) => enrichBookingPrice(mapDjangoReserva(r), courts))
   },
 
-  getOccupiedBookings: async () => {
+  /**
+   * GET /api/bookings/disponibilidad/?fecha=<epoch_ms>
+   * Devuelve bloques ocupados por cancha para una fecha.
+   */
+  getAvailability: async (dateStr) => {
+    const fecha = dateStringToEpochMs(dateStr)
+    const data = await request(`/bookings/disponibilidad/?fecha=${fecha}`)
+    return Array.isArray(data) ? data : []
+  },
+
+  /** Convierte respuesta de disponibilidad a formato booking para el calendario de slots. */
+  mapAvailabilityToBookings(dateStr, canchasData) {
+    const bookings = []
+    for (const court of canchasData) {
+      for (const slot of court.horarios_ocupados || []) {
+        const time = msToTimeRange(slot.hora_inicio, slot.hora_fin)
+        const durationMs = Number(slot.hora_fin) - Number(slot.hora_inicio)
+        const durationHours = Math.max(1, Math.round(durationMs / 3600000))
+        bookings.push({
+          id: `avail-${court.cancha_id}-${slot.hora_inicio}`,
+          courtId: String(court.cancha_id),
+          courtName: `Cancha #${court.numero}`,
+          date: dateStr,
+          time,
+          durationHours,
+          status: 'confirmed',
+        })
+      }
+    }
+    return bookings
+  },
+
+  getOccupiedBookings: async (dateStr) => {
+    if (dateStr) {
+      const raw = await api.getAvailability(dateStr)
+      return api.mapAvailabilityToBookings(dateStr, raw)
+    }
     const all = await api.getBookings()
-    return all.filter((b) => b.status !== 'completed')
+    return all.filter((b) => b.status !== 'completed' && b.status !== 'cancelled')
   },
 
   createBooking: async (bookingData) => {
@@ -311,15 +452,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    return mapDjangoReserva(created)
+    const mapped = mergeBookingFromClient(mapDjangoReserva(created), bookingData)
+    return enrichBookingPrice(mapped, [])
   },
 
-  updateBookingStatus: async (id, status) => {
-    const updated = await request(`/bookings/reservas/${id}/`, {
-      method: 'PATCH',
-      body: JSON.stringify({ estado: mapDjangoStatus(status) }),
+  /**
+   * Cambia el estado de una reserva vía POST .../cambiar_estado/
+   * Body: { "estado": "PENDIENTE" | "CONFIRMADA" | "CANCELADA" | "COMPLETADA" }
+   */
+  updateBookingStatus: async (id, status, previousBooking = null) => {
+    const djangoEstado = mapDjangoStatus(status)
+    const data = await request(CAMBIAR_ESTADO_PATH(id), {
+      method: 'POST',
+      body: JSON.stringify({ estado: djangoEstado }),
     })
-    return mapDjangoReserva(updated)
+    const mapped = mapDjangoReserva(data)
+    return previousBooking
+      ? mergeBookingFromClient(mapped, previousBooking)
+      : mapped
+  },
+
+  /** Al terminar el turno: POST cambiar_estado con COMPLETADA (mismo flujo que confirmar pago). */
+  finalizeBooking: async (booking) => {
+    return api.updateBookingStatus(booking.id, 'completed', booking)
+  },
+
+  /** Cancelar vía cambiar_estado → CANCELADA (preferido sobre DELETE). */
+  cancelBooking: async (id, previousBooking = null) => {
+    const updated = await api.updateBookingStatus(id, 'cancelled', previousBooking)
+    return { ...updated, status: 'cancelled', totalPrice: 0 }
   },
 
   deleteBooking: async (id) => {
@@ -360,10 +521,16 @@ export const api = {
     return formatted
   },
 
-  processPayment: async (bookingId, method) => {
+  processPayment: async (bookingId, method, bookingFromUI = null) => {
     const user = JSON.parse(localStorage.getItem('user_data') || '{}')
     const bookings = await api.getBookings()
-    const booking = bookings.find((b) => b.id === String(bookingId))
+    const booking =
+      bookingFromUI ||
+      bookings.find((b) => b.id === String(bookingId))
+    const monto = Number(booking?.totalPrice) || 0
+    if (monto <= 0) {
+      throw new Error('No se pudo determinar el monto de la reserva. Volvé a cargar la página.')
+    }
 
     const cobro = await request('/finance/cobros/', {
       method: 'POST',
@@ -371,7 +538,7 @@ export const api = {
         usuario: Number(user.id),
         tipo_servicio: 'RESERVA',
         reserva: Number(bookingId),
-        monto: booking?.totalPrice || 0,
+        monto,
         metodo_pago: PAYMENT_METHOD_MAP[method] || 'EFECTIVO',
         estado_pago: 'PENDIENTE',
       }),
@@ -382,36 +549,94 @@ export const api = {
       body: JSON.stringify({ estado_pago: 'APROBADO' }),
     })
 
-    await api.updateBookingStatus(bookingId, 'confirmed')
-    const updatedBooking = (await api.getBookings()).find((b) => b.id === String(bookingId)) || booking
+    const updatedBooking = await api.updateBookingStatus(bookingId, 'confirmed', booking)
+
+    let reciboApi = null
+    const reciboId = approved.recibo?.id ?? approved.recibo
+    if (reciboId) {
+      try {
+        reciboApi = await api.getRecibo(reciboId)
+      } catch {
+        reciboApi = null
+      }
+    }
 
     return {
-      booking: { ...updatedBooking, status: 'confirmed' },
+      booking: updatedBooking,
       recibo: {
-        numero: approved.recibo?.id || cobro.id,
-        monto: approved.monto,
+        id: reciboApi?.id ?? reciboId ?? cobro.id,
+        numero: reciboApi?.id ?? reciboId ?? cobro.id,
+        monto: Number(reciboApi?.cobro_monto ?? approved.monto ?? monto),
         metodo: method,
-        fecha: new Date().toLocaleDateString('es-AR'),
+        metodoPago: method,
+        emitidoEn: reciboApi?.fecha_emision
+          ? new Date(Number(reciboApi.fecha_emision)).toISOString()
+          : new Date().toISOString(),
+        detalle: reciboApi?.detalle || `Pago reserva #${bookingId}`,
+        cliente: user.name || user.email,
+        courtName: booking.courtName,
+        fecha: booking.date,
+        horario: booking.time,
+        cobroId: cobro.id,
       },
     }
   },
 
-  getClasses: async () => {
-    const data = await request('/bookings/clases/')
+  getCobros: async () => {
+    const data = await request('/finance/cobros/')
     const list = Array.isArray(data) ? data : data.results || []
+    return list.map((c) => ({
+      id: String(c.id),
+      usuarioId: String(c.usuario),
+      usuarioEmail: c.usuario_email || '',
+      monto: Number(c.monto) || 0,
+      metodoPago: c.metodo_pago || '',
+      estadoPago: c.estado_pago || '',
+      tipoServicio: c.tipo_servicio || '',
+      reservaId: c.reserva ? String(c.reserva) : null,
+      fechaCobro: c.fecha_cobro,
+      reciboId: c.recibo?.id ?? c.recibo ?? null,
+    }))
+  },
+
+  getRecibo: async (id) => {
+    const data = await request(`/finance/recibos/${id}/`)
+    return {
+      id: data.id,
+      detalle: data.detalle || '',
+      fecha_emision: data.fecha_emision,
+      cobro: data.cobro,
+      cobro_monto: data.cobro_monto,
+    }
+  },
+
+  getClasses: async (professorId = null) => {
+    const data = await request('/bookings/clases/')
+    let list = Array.isArray(data) ? data : data.results || []
+    if (professorId != null) {
+      list = list.filter((c) => String(c.profesor) === String(professorId))
+    }
     return list.map(mapDjangoClass)
   },
 
   saveAttendance: async (classId, students) => {
+    const estado = (present) => (present ? 'PRESENTE' : 'AUSENTE')
+
     for (const st of students) {
-      await request('/bookings/asistencia/', {
-        method: 'POST',
-        body: JSON.stringify({
-          clase: Number(classId),
-          alumno: Number(st.id),
-          estado_asistencia: st.present ? 'PRESENTE' : 'AUSENTE',
-        }),
+      const body = JSON.stringify({
+        clase: Number(classId),
+        alumno: Number(st.id),
+        estado_asistencia: estado(st.present),
       })
+
+      if (st.asistenciaId) {
+        await request(`/bookings/asistencia/${st.asistenciaId}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ estado_asistencia: estado(st.present) }),
+        })
+      } else {
+        await request('/bookings/asistencia/', { method: 'POST', body })
+      }
     }
   },
 }

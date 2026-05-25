@@ -1,10 +1,42 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import KanbanBoard from './KanbanBoard.jsx'
 import BookingsList from './BookingsList.jsx'
 import { DEFAULT_COURTS } from '../data/catalogDefaults.js'
+import { withDisplayStatuses } from '../utils/bookingRules.js'
 
-function Dashboard({ bookings, courts = DEFAULT_COURTS, onDeleteBooking, onUpdateBookingStatus, onOpenBooking, onRequestPayment }) {
+function Dashboard({
+  bookings,
+  courts = DEFAULT_COURTS,
+  onCancelBooking,
+  onDeleteBooking,
+  onUpdateBookingStatus,
+  onOpenBooking,
+  onRequestPayment,
+}) {
   const [viewMode, setViewMode] = useState('kanban')
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const tick = () => setNow(new Date())
+    const id = setInterval(tick, 15000)
+    return () => clearInterval(id)
+  }, [])
+
+  const displayBookings = useMemo(
+    () => withDisplayStatuses(bookings, now),
+    [bookings, now]
+  )
+
+  if (courts.length === 0) {
+    return (
+      <section id="dashboard-section" className="dashboard-section">
+        <div className="bookings-list-empty" style={{ marginTop: '2rem' }}>
+          <span className="material-symbols-outlined">stadium</span>
+          <p>No hay canchas disponibles en el sistema. Contactá al administrador.</p>
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section id="dashboard-section" className="dashboard-section">
@@ -42,16 +74,26 @@ function Dashboard({ bookings, courts = DEFAULT_COURTS, onDeleteBooking, onUpdat
 
       <div className="dashboard-grid">
         <div className="dashboard-main-panel">
-          {viewMode === 'kanban' ? (
+          {displayBookings.length === 0 ? (
+            <div className="bookings-list-empty" style={{ padding: '3rem 1rem' }}>
+              <span className="material-symbols-outlined">event_available</span>
+              <p>No tenés reservas todavía. Creá una con el botón Nueva Reserva.</p>
+              <button type="button" className="btn btn-primary" onClick={onOpenBooking}>
+                Nueva Reserva
+              </button>
+            </div>
+          ) : viewMode === 'kanban' ? (
             <KanbanBoard
-              bookings={bookings}
+              bookings={displayBookings}
+              onCancelBooking={onCancelBooking}
               onDeleteBooking={onDeleteBooking}
               onUpdateBookingStatus={onUpdateBookingStatus}
               onRequestPayment={onRequestPayment}
             />
           ) : (
             <BookingsList
-              bookings={bookings}
+              bookings={displayBookings}
+              onCancelBooking={onCancelBooking}
               onDeleteBooking={onDeleteBooking}
               onUpdateBookingStatus={onUpdateBookingStatus}
               onRequestPayment={onRequestPayment}
@@ -62,7 +104,7 @@ function Dashboard({ bookings, courts = DEFAULT_COURTS, onDeleteBooking, onUpdat
         <aside className="sidebar-panel">
           <div className="panel-card">
             <h3>Nuestras Canchas</h3>
-            <p className="panel-subtitle">Duración máx.: F5 1 h · F7 1,5 h · F11 2 h (RF-26).</p>
+            <p className="panel-subtitle">Duración máx.: F5 1 h · F7 1,5 h · F11 2 h.</p>
             <div className="fields-mini-list" id="fields-mini-list">
               {courts.map((court) => (
                 <div className="mini-field-card" key={court.id}>

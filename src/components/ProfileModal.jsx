@@ -24,18 +24,37 @@ function ProfileModal({ currentUser, isOpen, onClose, onUserUpdate, showToast })
   })
 
   useEffect(() => {
-    if (currentUser) {
-      setForm({
-        name: currentUser.name || '',
-        telefono: currentUser.telefono || '',
-        direccion: currentUser.direccion || '',
-        localidad: currentUser.localidad || '',
-        provincia: currentUser.provincia || 'Buenos Aires',
-        codigoPostal: currentUser.codigoPostal || '',
-      })
+    if (!isOpen) return
+
+    const sync = async () => {
+      try {
+        const fresh = await api.refreshSessionUser()
+        onUserUpdate?.(fresh)
+        setForm({
+          name: fresh.name || '',
+          telefono: fresh.telefono || '',
+          direccion: fresh.direccion || '',
+          localidad: fresh.localidad || '',
+          provincia: fresh.provincia || 'Buenos Aires',
+          codigoPostal: fresh.codigoPostal || '',
+        })
+      } catch {
+        if (currentUser) {
+          setForm({
+            name: currentUser.name || '',
+            telefono: currentUser.telefono || '',
+            direccion: currentUser.direccion || '',
+            localidad: currentUser.localidad || '',
+            provincia: currentUser.provincia || 'Buenos Aires',
+            codigoPostal: currentUser.codigoPostal || '',
+          })
+        }
+      }
+      setEditing(false)
     }
-    setEditing(false)
-  }, [currentUser, isOpen])
+
+    sync()
+  }, [isOpen])
 
   if (!isOpen || !currentUser) return null
 

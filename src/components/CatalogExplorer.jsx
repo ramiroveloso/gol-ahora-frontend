@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import { api, isMockMode } from '../services/api.js'
+import { api } from '../services/api.js'
+
+const COURT_TYPE_FILTERS = [
+  { value: '', label: 'Todos' },
+  { value: 'FUTBOL_5', label: 'Fútbol 5' },
+  { value: 'FUTBOL_7', label: 'Fútbol 7' },
+  { value: 'FUTBOL_11', label: 'Fútbol 11' },
+  { value: 'PADDLE', label: 'Paddle' },
+  { value: 'TENIS', label: 'Tenis' },
+]
 
 const TABS = [
   { id: 'courts', label: 'Canchas', icon: 'stadium' },
@@ -14,12 +23,13 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [courtTipoFilter, setCourtTipoFilter] = useState('')
 
-  const loadAll = async () => {
+  const loadAll = async (tipoCancha = courtTipoFilter) => {
     setLoading(true)
     try {
       const [c, p, u] = await Promise.all([
-        api.getCourts(),
+        api.getCourts(tipoCancha ? { tipo_cancha: tipoCancha } : {}),
         api.getProfessors(),
         api.adminGetUsers(),
       ])
@@ -36,6 +46,10 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
   useEffect(() => {
     loadAll()
   }, [])
+
+  useEffect(() => {
+    if (tab === 'courts') loadAll(courtTipoFilter)
+  }, [courtTipoFilter])
 
   const q = search.toLowerCase()
 
@@ -83,9 +97,6 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
           <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>arrow_back</span>
           Volver al Portal
         </button>
-        {isMockMode && (
-          <span style={{ fontSize: '0.75rem', color: '#2ECC71' }}>Datos locales — sin token del backend</span>
-        )}
       </div>
 
       <div
@@ -98,8 +109,27 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
       >
         <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 800 }}>Catálogo del sistema</h2>
         <p style={{ margin: '0 0 1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-          Listados de canchas, profesores y usuarios para desarrollo de pantallas.
+          Listados desde la API: canchas, profesores y usuarios.
         </p>
+
+        {tab === 'courts' && (
+          <div className="form-group" style={{ marginBottom: '1rem', maxWidth: 280 }}>
+            <label htmlFor="catalog-court-filter">Tipo de cancha (API)</label>
+            <select
+              id="catalog-court-filter"
+              value={courtTipoFilter}
+              onChange={(e) => setCourtTipoFilter(e.target.value)}
+              className="bookings-sort-select"
+              style={{ width: '100%' }}
+            >
+              {COURT_TYPE_FILTERS.map((o) => (
+                <option key={o.value || 'all'} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           {TABS.map((t) => (

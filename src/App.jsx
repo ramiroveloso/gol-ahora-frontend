@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import Header from './components/Header.jsx'
 import Auth from './components/Auth.jsx'
 import Dashboard from './components/Dashboard.jsx'
@@ -9,11 +9,13 @@ import Attendance from './components/Attendance.jsx'
 import Competitions from './components/Competitions.jsx'
 import AdminUsers from './components/AdminUsers.jsx'
 import AdminCalendar from './components/AdminCalendar.jsx'
+import AdminFinance from './components/AdminFinance.jsx'
 import CatalogExplorer from './components/CatalogExplorer.jsx'
 import ProfileModal from './components/ProfileModal.jsx'
 import PaymentModal from './components/PaymentModal.jsx'
 import { api } from './services/api.js'
 import { DEFAULT_COURTS } from './data/catalogDefaults.js'
+import { shouldFinalizeTurn, filterBookingsForUser } from './utils/bookingRules.js'
 
 export const TIME_SLOTS = [
   '08:00 - 09:00', '09:00 - 10:00', '10:00 - 11:00', '11:00 - 12:00',
@@ -34,6 +36,7 @@ function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const [paymentBooking, setPaymentBooking] = useState(null)
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' })
+  const finalizingIdsRef = useRef(new Set())
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -76,6 +79,35 @@ function App() {
     load()
   }, [currentUser])
 
+  useEffect(() => {
+    if (!currentUser || bookings.length === 0) return
+
+    const finalizeDueTurns = async () => {
+      const due = bookings.filter((b) => shouldFinalizeTurn(b))
+      for (const booking of due) {
+        if (finalizingIdsRef.current.has(booking.id)) continue
+        finalizingIdsRef.current.add(booking.id)
+        try {
+          const updated = await api.finalizeBooking(booking)
+          setBookings((prev) => prev.map((b) => (b.id === booking.id ? updated : b)))
+        } catch (err) {
+          console.warn('No se pudo finalizar la reserva', booking.id, err)
+        } finally {
+          finalizingIdsRef.current.delete(booking.id)
+        }
+      }
+    }
+
+    finalizeDueTurns()
+    const intervalId = setInterval(finalizeDueTurns, 15000)
+    return () => clearInterval(intervalId)
+  }, [currentUser, bookings])
+
+  const bookingsForUser = useMemo(
+    () => filterBookingsForUser(bookings, currentUser),
+    [bookings, currentUser],
+  )
+
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type })
   }
@@ -109,7 +141,8 @@ function App() {
 
   const handleUpdateBookingStatus = async (bookingId, nextStatus) => {
     try {
-      const updated = await api.updateBookingStatus(bookingId, nextStatus)
+      const previous = bookings.find((b) => b.id === bookingId)
+      const updated = await api.updateBookingStatus(bookingId, nextStatus, previous)
       setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)))
       showToast('Reserva actualizada en el servidor', 'success')
     } catch (err) {
@@ -117,13 +150,26 @@ function App() {
     }
   }
 
+  const handleCancelBooking = async (bookingId) => {
+    try {
+      const previous = bookings.find((b) => b.id === bookingId)
+      const updated = await api.cancelBooking(bookingId, previous)
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...updated, status: 'cancelled', totalPrice: 0 } : b)),
+      )
+      showToast('Reserva cancelada', 'info')
+    } catch (err) {
+      showToast(err.message || 'Error al cancelar la reserva', 'error')
+    }
+  }
+
   const handleDeleteBooking = async (bookingId) => {
     try {
       await api.deleteBooking(bookingId)
       setBookings((prev) => prev.filter((b) => b.id !== bookingId))
-      showToast('Reserva eliminada con éxito', 'info')
+      showToast('Reserva eliminada del sistema', 'info')
     } catch (err) {
-      showToast(err.message || 'Error al cancelar la reserva', 'error')
+      showToast(err.message || 'Error al eliminar la reserva', 'error')
     }
   }
 
@@ -208,9 +254,12 @@ function App() {
             )}
             {currentView === 'dashboard' && (
               <Dashboard
-                bookings={bookings}
+                bookings={bookingsForUser}
                 courts={courts}
-                onDeleteBooking={handleDeleteBooking}
+                onCancelBooking={handleCancelBooking}
+                onDeleteBooking={
+                  currentUser.role === 'administrador' ? handleDeleteBooking : undefined
+                }
                 onUpdateBookingStatus={handleUpdateBookingStatus}
                 onOpenBooking={() => setIsBookingOpen(true)}
                 onRequestPayment={handleRequestPayment}
@@ -226,9 +275,9 @@ function App() {
             {currentView === 'competitions' && (
               <Competitions
                 currentUser={currentUser}
-                bookings={bookings}
+                bookings={bookingsForUser}
                 onBackToPortal={() => setCurrentView('portal')}
-                onDeleteBooking={handleDeleteBooking}
+                onCancelBooking={handleCancelBooking}
               />
             )}
             {currentView === 'admin_users' && (
@@ -245,11 +294,16 @@ function App() {
                 showToast={showToast}
               />
             )}
+            {currentView === 'admin_finance' && (
+              <AdminFinance
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
+              />
+            )}
             {currentView === 'admin_calendar' && (
               <AdminCalendar
                 bookings={bookings}
                 courts={courts}
-                onAddBooking={handleAddBooking}
                 onDeleteBooking={handleDeleteBooking}
                 onBackToPortal={() => setCurrentView('portal')}
                 showToast={showToast}
