@@ -4,7 +4,10 @@ import { formatApiError } from '../utils/apiErrors.js'
 const PROTOCOL = import.meta.env.VITE_API_PROTOCOL || 'http'
 const DOMAIN = import.meta.env.VITE_API_DOMAIN || 'localhost'
 const PORT = import.meta.env.VITE_API_PORT || '8000'
-const API_URL = import.meta.env.VITE_API_URL || `${PROTOCOL}://${DOMAIN}:${PORT}/api`
+
+// CORRECCIÓN: Aseguramos que API_URL no deje barras flotantes ambiguas
+const BASE_URL_ENV = import.meta.env.VITE_API_URL
+const API_URL = BASE_URL_ENV ? BASE_URL_ENV.replace(/\/$/, '') : `${PROTOCOL}://${DOMAIN}:${PORT}/api`
 
 /** Siempre false: conexión al backend Django (sesión + CSRF). */
 export const isMockMode = false
@@ -40,7 +43,9 @@ async function request(endpoint, options = {}) {
     credentials: 'include',
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, config)
+  // Normalizamos para evitar que se junten dobles barras (ej: api//auth)
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+  const response = await fetch(`${API_URL}${cleanEndpoint}`, config)
   const isNoContent = response.status === 204
   let data = {}
 
@@ -48,7 +53,7 @@ async function request(endpoint, options = {}) {
     try {
       data = await response.json()
     } catch {
-      data = { detail: 'La respuesta no es JSON válido' }
+      data = { detail: 'La respuesta del servidor no es un JSON válido' }
     }
   }
 
@@ -87,7 +92,8 @@ function formatUser(djangoUser) {
     direccion: djangoUser.direccion || '',
     localidad: djangoUser.localidad || '',
     provincia: djangoUser.provincia || '',
-    codigoPostal: djangoUser.codigoPostal || djangoUser.codigopostal || '',
+    // ADAPTADO: Agregamos soporte para la nomenclatura snake_case de Django
+    codigoPostal: djangoUser.codigo_postal || djangoUser.codigoPostal || djangoUser.codigopostal || '',
     dni: djangoUser.dni || '',
     memberSince: djangoUser.memberSince || '',
     certificacionVigente: djangoUser.certificacionVigente ?? role !== 'profesional',
@@ -110,7 +116,6 @@ function mapFrontStatus(estado) {
   return map[estado] || 'pending'
 }
 
-/** Estados del kanban/UI → valores del backend (EstadoEnum). */
 function mapDjangoStatus(status) {
   const map = {
     pending: 'PENDIENTE',
@@ -175,7 +180,6 @@ function mapDjangoReserva(r) {
   }
 }
 
-/** Conserva datos calculados en el front (precio, extras) que Django no devuelve. */
 function mergeBookingFromClient(mapped, source = {}) {
   if (!source || typeof source !== 'object') return mapped
   if (mapped.status === 'cancelled') {
@@ -195,7 +199,6 @@ function mergeBookingFromClient(mapped, source = {}) {
   }
 }
 
-/** Calcula total desde catálogo de canchas si el backend no envió monto. */
 function enrichBookingPrice(booking, courts = []) {
   if (booking.totalPrice > 0) return booking
   const court = courts.find((c) => c.id === String(booking.courtId))
@@ -258,7 +261,6 @@ function mapStudentFromAsistencia(a) {
 
 function mapDjangoClass(clase) {
   const students = (clase.asistencias || []).map(mapStudentFromAsistencia)
-
   const horario = new Date(Number(clase.horario))
   return {
     id: String(clase.id),
@@ -290,7 +292,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username: usernameOrEmail, password }),
     })
-    const formattedUser = formatUser(data.user || data.data || data)
+    
+    // CONTROL PROTEGIDO: Si DRF devuelve el usuario suelto o adentro de data.user
+    const targetUser = data.user || data.data || (data.token ? null : data)
+    const formattedUser = formatUser(targetUser || { username: usernameOrEmail, email: usernameOrEmail, rol: 'SOCIO' })
+    
+    if (data.token) {
+      localStorage.setItem('token', data.token)
+    }
+    
     if (formattedUser) localStorage.setItem('user_data', JSON.stringify(formattedUser))
     return formattedUser
   },
@@ -315,13 +325,15 @@ export const api = {
         rol: djangoRol,
         telefono: details.telefono || '',
         direccion: details.direccion || '',
+        localidad: details.localidad || '',
+        provincia: details.provincia || '',
+        codigo_postal: details.codigoPostal || '', // Mapeado exacto para el backend
       }),
     })
 
     return api.login(details.username || details.email, details.password)
   },
 
-  /** Actualiza sesión desde GET usuarios/{id}/ (+ profesor si aplica). */
   refreshSessionUser: async () => {
     const stored = JSON.parse(localStorage.getItem('user_data') || '{}')
     if (!stored.id) throw new Error('Sin sesión')
@@ -334,7 +346,7 @@ export const api = {
         const prof = await api.getProfessor(stored.id)
         formatted = { ...formatted, ...prof }
       } catch {
-        /* GET profesores/{id} opcional */
+        /* Opcional */
       }
     }
 
@@ -349,6 +361,7 @@ export const api = {
       console.error('Error durante logout', err)
     } finally {
       localStorage.removeItem('user_data')
+      localStorage.removeItem('token') // Limpieza total de llaves
     }
   },
 
@@ -360,6 +373,7 @@ export const api = {
       return api.refreshSessionUser()
     } catch (err) {
       localStorage.removeItem('user_data')
+      localStorage.removeItem('token')
       throw err
     }
   },
@@ -379,7 +393,6 @@ export const api = {
     return list.map(mapDjangoProfessor)
   },
 
-  /** GET /api/auth/profesores/{id}/ — datos completos del profesor logueado. */
   getProfessor: async (id) => {
     const data = await request(`/auth/profesores/${id}/`)
     const base = formatUser(data)
@@ -404,17 +417,12 @@ export const api = {
     return list.map((r) => enrichBookingPrice(mapDjangoReserva(r), courts))
   },
 
-  /**
-   * GET /api/bookings/disponibilidad/?fecha=<epoch_ms>
-   * Devuelve bloques ocupados por cancha para una fecha.
-   */
   getAvailability: async (dateStr) => {
     const fecha = dateStringToEpochMs(dateStr)
     const data = await request(`/bookings/disponibilidad/?fecha=${fecha}`)
     return Array.isArray(data) ? data : []
   },
 
-  /** Convierte respuesta de disponibilidad a formato booking para el calendario de slots. */
   mapAvailabilityToBookings(dateStr, canchasData) {
     const bookings = []
     for (const court of canchasData) {
@@ -456,10 +464,6 @@ export const api = {
     return enrichBookingPrice(mapped, [])
   },
 
-  /**
-   * Cambia el estado de una reserva vía POST .../cambiar_estado/
-   * Body: { "estado": "PENDIENTE" | "CONFIRMADA" | "CANCELADA" | "COMPLETADA" }
-   */
   updateBookingStatus: async (id, status, previousBooking = null) => {
     const djangoEstado = mapDjangoStatus(status)
     const data = await request(CAMBIAR_ESTADO_PATH(id), {
@@ -472,12 +476,10 @@ export const api = {
       : mapped
   },
 
-  /** Al terminar el turno: POST cambiar_estado con COMPLETADA (mismo flujo que confirmar pago). */
   finalizeBooking: async (booking) => {
     return api.updateBookingStatus(booking.id, 'completed', booking)
   },
 
-  /** Cancelar vía cambiar_estado → CANCELADA (preferido sobre DELETE). */
   cancelBooking: async (id, previousBooking = null) => {
     const updated = await api.updateBookingStatus(id, 'cancelled', previousBooking)
     return { ...updated, status: 'cancelled', totalPrice: 0 }
