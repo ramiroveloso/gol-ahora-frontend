@@ -1,64 +1,200 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import Header from './components/Header.jsx'
 import Auth from './components/Auth.jsx'
+import Dashboard from './components/Dashboard.jsx'
+import BookingDrawer from './components/BookingDrawer.jsx'
+import Toast from './components/Toast.jsx'
+import Portal from './components/Portal.jsx'
+import Attendance from './components/Attendance.jsx'
+import Competitions from './components/Competitions.jsx'
+import AdminUsers from './components/AdminUsers.jsx'
+import AdminCalendar from './components/AdminCalendar.jsx'
+import AdminFinance from './components/AdminFinance.jsx'
+import CatalogExplorer from './components/CatalogExplorer.jsx'
+import ProfileModal from './components/ProfileModal.jsx'
+import PaymentModal from './components/PaymentModal.jsx'
 import { api } from './services/api.js'
+import { DEFAULT_COURTS } from './data/catalogDefaults.js'
+import { shouldFinalizeTurn, filterBookingsForUser } from './utils/bookingRules.js'
+
+export const TIME_SLOTS = [
+  '08:00 - 09:00', '09:00 - 10:00', '10:00 - 11:00', '11:00 - 12:00',
+  '12:00 - 13:00', '13:00 - 14:00', '14:00 - 15:00', '15:00 - 16:00',
+  '16:00 - 17:00', '17:00 - 18:00', '18:00 - 19:00', '19:00 - 20:00',
+  '20:00 - 21:00', '21:00 - 22:00',
+]
 
 function App() {
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [toasts, setToasts] = useState([]);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
+  const [currentUser, setCurrentUser] = useState(null)
+  const [currentView, setCurrentView] = useState('portal')
+  const [bookings, setBookings] = useState([])
+  const [courts, setCourts] = useState(DEFAULT_COURTS)
 
-  // Sync theme with HTML attribute
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+  const [loading, setLoading] = useState(true)
+  const [isBookingOpen, setIsBookingOpen] = useState(false)
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [paymentBooking, setPaymentBooking] = useState(null)
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' })
+  const finalizingIdsRef = useRef(new Set())
 
-  // Session validation on startup
   useEffect(() => {
-    const fetchSession = async () => {
-      const token = localStorage.getItem('token')
-      if (token) {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    const initApp = async () => {
+      await api.fetchCsrfToken()
+      try {
+        const user = await api.getMe()
+        setCurrentUser(user)
+      } catch {
+        setCurrentUser(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+    initApp()
+  }, [])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setBookings([])
+      return
+    }
+
+    const load = async () => {
+      try {
+        const [bookingData, courtData] = await Promise.all([
+          api.getBookings(),
+          api.getCourts(),
+        ])
+        setBookings(bookingData)
+        if (courtData.length > 0) setCourts(courtData)
+      } catch (err) {
+        showToast(err.message || 'Error al cargar datos del servidor', 'error')
+      }
+    }
+    load()
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!currentUser || bookings.length === 0) return
+
+    const finalizeDueTurns = async () => {
+      const due = bookings.filter((b) => shouldFinalizeTurn(b))
+      for (const booking of due) {
+        if (finalizingIdsRef.current.has(booking.id)) continue
+        finalizingIdsRef.current.add(booking.id)
         try {
-          const user = await api.getMe()
-          setCurrentUser(user)
-          showToast(`Bienvenido de vuelta, ${user.name}!`, 'success')
+          const updated = await api.finalizeBooking(booking)
+          setBookings((prev) => prev.map((b) => (b.id === booking.id ? updated : b)))
         } catch (err) {
-          // Token expired or invalid
-          api.logout()
-          setCurrentUser(null)
+          console.warn('No se pudo finalizar la reserva', booking.id, err)
+        } finally {
+          finalizingIdsRef.current.delete(booking.id)
         }
       }
-      setLoading(false)
     }
-    fetchSession()
-  }, []);
+
+    finalizeDueTurns()
+    const intervalId = setInterval(finalizeDueTurns, 15000)
+    return () => clearInterval(intervalId)
+  }, [currentUser, bookings])
+
+  const bookingsForUser = useMemo(
+    () => filterBookingsForUser(bookings, currentUser),
+    [bookings, currentUser],
+  )
 
   const showToast = (message, type = 'success') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    
-    // Auto remove after 4 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  };
+    setToast({ show: true, message, type })
+  }
 
   const handleToggleTheme = () => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(nextTheme);
-    showToast(`Modo ${nextTheme === 'dark' ? 'oscuro' : 'claro'} activado`, 'success');
-  };
+    const nextTheme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(nextTheme)
+    showToast(`Modo ${nextTheme === 'dark' ? 'oscuro' : 'claro'} activado`, 'info')
+  }
 
   const handleLogin = (user) => {
-    setCurrentUser(user);
-  };
+    setCurrentUser(user)
+    setCurrentView('portal')
+  }
 
-  const handleLogout = () => {
-    api.logout();
-    setCurrentUser(null);
-    showToast('Sesión cerrada correctamente', 'success');
-  };
+  const handleLogout = async () => {
+    await api.logout()
+    setCurrentUser(null)
+    setCurrentView('portal')
+    showToast('Sesión cerrada correctamente', 'info')
+  }
+
+  const handleRefreshBookings = async () => {
+    try {
+      const data = await api.getBookings()
+      setBookings(data)
+    } catch (err) {
+      showToast(err.message || 'Error al actualizar reservas', 'error')
+    }
+  }
+
+  const handleUpdateBookingStatus = async (bookingId, nextStatus) => {
+    try {
+      const previous = bookings.find((b) => b.id === bookingId)
+      const updated = await api.updateBookingStatus(bookingId, nextStatus, previous)
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)))
+      showToast('Reserva actualizada en el servidor', 'success')
+    } catch (err) {
+      showToast(err.message || 'Error al mover la reserva', 'error')
+    }
+  }
+
+  const handleCancelBooking = async (bookingId) => {
+    try {
+      const previous = bookings.find((b) => b.id === bookingId)
+      const updated = await api.cancelBooking(bookingId, previous)
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...updated, status: 'cancelled', totalPrice: 0 } : b)),
+      )
+      showToast('Reserva cancelada', 'info')
+    } catch (err) {
+      showToast(err.message || 'Error al cancelar la reserva', 'error')
+    }
+  }
+
+  const handleDeleteBooking = async (bookingId) => {
+    try {
+      await api.deleteBooking(bookingId)
+      setBookings((prev) => prev.filter((b) => b.id !== bookingId))
+      showToast('Reserva eliminada del sistema', 'info')
+    } catch (err) {
+      showToast(err.message || 'Error al eliminar la reserva', 'error')
+    }
+  }
+
+  const handleAddBooking = async (bookingData) => {
+    try {
+      const createdBooking = await api.createBooking(bookingData)
+      setBookings((prev) => [...prev, createdBooking])
+      showToast('Reserva creada. Completá el pago para confirmarla.', 'success')
+    } catch (err) {
+      showToast(err.message || 'Error al registrar la reserva', 'error')
+    }
+  }
+
+  const handleUserUpdate = (user) => {
+    setCurrentUser(user)
+  }
+
+  const handleRequestPayment = (booking) => {
+    setPaymentBooking(booking)
+  }
+
+  const handlePaymentSuccess = ({ booking }) => {
+    setBookings((prev) => prev.map((b) => (b.id === booking.id ? booking : b)))
+    setPaymentBooking(null)
+  }
 
   if (loading) {
     return (
@@ -72,13 +208,12 @@ function App() {
         fontFamily: 'Outfit, sans-serif',
         fontSize: '1.2rem',
         fontWeight: '600',
-        transition: 'all 0.4s'
       }}>
         <span className="material-symbols-outlined" style={{
           marginRight: '0.6rem',
           fontSize: '2rem',
           animation: 'spin 1.5s linear infinite',
-          color: '#2ECC71'
+          color: '#2ECC71',
         }}>sports_soccer</span>
         Cargando Gol Ahora...
         <style>{`
@@ -93,80 +228,128 @@ function App() {
 
   return (
     <>
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      {currentUser && (
+        <Header
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onGoToPortal={() => setCurrentView('portal')}
+          onOpenProfile={() => setIsProfileOpen(true)}
+        />
+      )}
+
+      <main className={currentUser ? 'app-container' : ''}>
         {!currentUser ? (
-          <Auth 
-            onLoginSuccess={handleLogin} 
-            showToast={showToast} 
-            theme={theme} 
-            onToggleTheme={handleToggleTheme} 
+          <Auth
+            onLoginSuccess={handleLogin}
+            showToast={showToast}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
           />
         ) : (
-          <section className="auth-section">
-            {/* Theme Toggle is also active in success view! */}
-            <button 
-              type="button" 
-              className="auth-theme-toggle" 
-              onClick={handleToggleTheme} 
-              title="Cambiar Tema"
-              aria-label="Cambiar Tema"
-            >
-              <span className="material-symbols-outlined theme-icon">
-                {theme === 'dark' ? 'light_mode' : 'dark_mode'}
-              </span>
-            </button>
-
-            <div className="auth-card success-screen">
-              <span className="material-symbols-outlined success-icon">check_circle</span>
-              <h1>¡SESIÓN INICIADA!</h1>
-              
-              <div style={{ textAlign: 'center', margin: '0.5rem 0 1.5rem', lineHeight: '1.6' }}>
-                <p style={{ fontWeight: '600', fontSize: '1.1rem', color: '#2ECC71' }}>
-                  {currentUser.name}
-                </p>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: '0.2rem' }}>
-                  Rol: {currentUser.role}
-                </p>
-                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.8rem' }}>
-                  Email: {currentUser.email}
-                </p>
-                {currentUser.telefono && (
-                  <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    Tel: {currentUser.telefono}
-                  </p>
-                )}
-                {currentUser.direccion && (
-                  <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    Dirección: {currentUser.direccion}, {currentUser.localidad}
-                  </p>
-                )}
-              </div>
-
-              <button 
-                onClick={handleLogout} 
-                className="btn btn-outline btn-full"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: '1.20rem' }}>logout</span>
-                Cerrar Sesión
-              </button>
-            </div>
-          </section>
+          <>
+            {currentView === 'portal' && (
+              <Portal currentUser={currentUser} onViewChange={setCurrentView} />
+            )}
+            {currentView === 'dashboard' && (
+              <Dashboard
+                bookings={bookingsForUser}
+                courts={courts}
+                onCancelBooking={handleCancelBooking}
+                onDeleteBooking={
+                  currentUser.role === 'administrador' ? handleDeleteBooking : undefined
+                }
+                onUpdateBookingStatus={handleUpdateBookingStatus}
+                onOpenBooking={() => setIsBookingOpen(true)}
+                onRequestPayment={handleRequestPayment}
+              />
+            )}
+            {currentView === 'attendance' && (
+              <Attendance
+                currentUser={currentUser}
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
+              />
+            )}
+            {currentView === 'competitions' && (
+              <Competitions
+                currentUser={currentUser}
+                bookings={bookingsForUser}
+                onBackToPortal={() => setCurrentView('portal')}
+                onCancelBooking={handleCancelBooking}
+              />
+            )}
+            {currentView === 'admin_users' && (
+              <AdminUsers
+                currentUser={currentUser}
+                onBackToPortal={() => setCurrentView('portal')}
+                onRefreshBookings={handleRefreshBookings}
+                showToast={showToast}
+              />
+            )}
+            {currentView === 'catalog' && (
+              <CatalogExplorer
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
+              />
+            )}
+            {currentView === 'admin_finance' && (
+              <AdminFinance
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
+              />
+            )}
+            {currentView === 'admin_calendar' && (
+              <AdminCalendar
+                bookings={bookings}
+                courts={courts}
+                onDeleteBooking={handleDeleteBooking}
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
+              />
+            )}
+          </>
         )}
       </main>
 
-      {/* Toast Notifications container */}
-      {toasts.length > 0 && (
-        <div className="toast-container">
-          {toasts.map((t) => (
-            <div key={t.id} className={`toast ${t.type}`}>
-              <span className="material-symbols-outlined" style={{ fontSize: '1.2rem', color: t.type === 'success' ? '#2ECC71' : '#e74c3c' }}>
-                {t.type === 'success' ? 'check_circle' : 'error'}
-              </span>
-              <span>{t.message}</span>
-            </div>
-          ))}
-        </div>
+      {isBookingOpen && currentUser && (
+        <BookingDrawer
+          isOpen={isBookingOpen}
+          onClose={() => setIsBookingOpen(false)}
+          currentUser={currentUser}
+          courts={courts}
+          allBookings={bookings}
+          onAddBooking={handleAddBooking}
+        />
+      )}
+
+      {isProfileOpen && currentUser && (
+        <ProfileModal
+          currentUser={currentUser}
+          isOpen={isProfileOpen}
+          onClose={() => setIsProfileOpen(false)}
+          onUserUpdate={handleUserUpdate}
+          showToast={showToast}
+        />
+      )}
+
+      {paymentBooking && currentUser && (
+        <PaymentModal
+          booking={paymentBooking}
+          currentUser={currentUser}
+          onClose={() => setPaymentBooking(null)}
+          onPaymentSuccess={handlePaymentSuccess}
+          showToast={showToast}
+        />
+      )}
+
+      {toast.show && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast((prev) => ({ ...prev, show: false }))}
+        />
       )}
     </>
   )

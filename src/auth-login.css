@@ -1,0 +1,384 @@
+/* Login / registro — estilos del main (Vercel). Sobrescribe reglas viejas de frontend/day. */
+
+.auth-section {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex: 1;
+    padding: 3rem 1.5rem;
+    position: relative;
+    overflow: hidden;
+    min-height: calc(100vh - 2rem);
+}
+
+.auth-section::before {
+    content: '';
+    position: absolute;
+    top: -150px;
+    right: -150px;
+    width: 450px;
+    height: 450px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(46, 204, 113, 0.04) 0%, rgba(0, 0, 0, 0) 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.auth-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    width: 100%;
+    max-width: 460px;
+    padding: 3rem;
+    box-shadow: var(--shadow-soft), var(--shadow-glow);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    z-index: 1;
+    backdrop-filter: blur(10px);
+}
+
+.auth-card:hover {
+    border-color: rgba(46, 204, 113, 0.25);
+    box-shadow: var(--shadow-soft), 0 0 25px rgba(46, 204, 113, 0.18);
+}
+
+.auth-logo-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+
+.auth-logo-svg {
+    width: 70px;
+    height: 70px;
+    margin-bottom: 1.2rem;
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    filter: drop-shadow(0 0 8px rgba(46, 204, 113, 0.3));
+}
+
+.auth-logo-container:hover .auth-logo-svg {
+    transform: rotate(360deg) scale(1.08);
+}
+
+.auth-header h2 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.8rem;
+    letter-spacing: -0.02em;
+    font-weight: 800;
+    margin-bottom: 0.4rem;
+    color: var(--text-main);
+}
+
+.auth-header p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+}
+
+.auth-tabs {
+    background-color: var(--bg-input);
+    padding: 0.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 2rem;
+    display: flex;
+    border-bottom: none;
+}
+
+.auth-tab {
+    flex: 1;
+    border-radius: 9px;
+    padding: 0.65rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    border-bottom: none;
+}
+
+.auth-tab.active {
+    background-color: var(--bg-card);
+    color: var(--accent-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border-bottom-color: transparent;
+}
+
+.auth-tab:not(.active):hover {
+    color: var(--text-main);
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+}
+
+.auth-card .form-group label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+.auth-card .input-wrapper input {
+    width: 100%;
+    padding: 0.85rem 1rem 0.85rem 2.8rem;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background-color: var(--bg-input);
+    color: var(--text-main);
+    font-size: 0.9rem;
+    outline: none;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auth-card .input-wrapper input:focus {
+    border-color: var(--accent-color);
+    background-color: rgba(46, 204, 113, 0.02);
+    box-shadow: 0 0 12px rgba(46, 204, 113, 0.12);
+}
+
+.auth-card .input-wrapper .input-icon {
+    position: absolute;
+    left: 1rem;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    transition: color 0.25s;
+    pointer-events: none;
+}
+
+.auth-card .input-wrapper:focus-within .input-icon {
+    color: var(--accent-color);
+}
+
+.auth-card .btn-primary {
+    background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-hover) 100%);
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(46, 204, 113, 0.2);
+}
+
+.auth-card .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(46, 204, 113, 0.3);
+    background-color: transparent;
+}
+
+.auth-card .btn-full {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.85rem 1.5rem;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+@media (max-width: 480px) {
+    .form-grid-2 {
+        grid-template-columns: 1fr;
+    }
+}
+
+.register-steps {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    background: var(--bg-input);
+    padding: 0.4rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    gap: 0.4rem;
+}
+
+.register-step-dot {
+    flex: 1;
+    text-align: center;
+    padding: 0.5rem;
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    transition: all 0.3s;
+}
+
+.register-step-dot span {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: var(--text-muted);
+}
+
+.register-step-dot.current {
+    background: var(--bg-card);
+    color: var(--accent-color);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.register-step-dot.current span,
+.register-step-dot.done span {
+    color: var(--accent-color);
+}
+
+.register-step-dot.done {
+    color: var(--text-main);
+}
+
+.role-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.role-card {
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.role-card:hover {
+    border-color: rgba(46, 204, 113, 0.3);
+    background-color: rgba(46, 204, 113, 0.01);
+    transform: translateX(3px);
+}
+
+.role-card.selected {
+    border-color: var(--accent-color);
+    background-color: var(--accent-light);
+    box-shadow: 0 0 15px rgba(46, 204, 113, 0.1);
+}
+
+.role-card strong {
+    font-size: 0.95rem;
+    color: var(--text-main);
+    font-weight: 700;
+}
+
+.role-card span:last-child {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+}
+
+.role-card .role-icon {
+    font-size: 2rem;
+    color: var(--text-muted);
+    transition: color 0.25s;
+}
+
+.role-card.selected .role-icon {
+    color: var(--accent-color);
+}
+
+.auth-theme-toggle {
+    position: fixed;
+    top: 2rem;
+    right: 2rem;
+    z-index: 999;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), var(--shadow-glow);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    outline: none;
+}
+
+.auth-theme-toggle:hover {
+    transform: scale(1.1) rotate(15deg);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6), 0 0 15px rgba(46, 204, 113, 0.25);
+}
+
+.auth-theme-toggle .theme-icon {
+    font-size: 1.4rem;
+}
+
+.toast-container {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.toast {
+    background-color: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    padding: 1rem 1.5rem;
+    border-radius: 12px;
+    box-shadow: var(--shadow-soft);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    animation: slideInToast 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast.success {
+    border-left: 4px solid var(--accent-color);
+}
+
+.toast.error {
+    border-left: 4px solid #e74c3c;
+}
+
+@keyframes slideInToast {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.success-screen {
+    text-align: center;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.success-icon {
+    font-size: 4rem;
+    color: var(--accent-color);
+}
+
+.success-screen h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
