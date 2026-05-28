@@ -85,6 +85,7 @@ function Dashboard({
           ) : viewMode === 'kanban' ? (
             <KanbanBoard
               bookings={displayBookings}
+              now={now}
               onCancelBooking={onCancelBooking}
               onDeleteBooking={onDeleteBooking}
               onUpdateBookingStatus={onUpdateBookingStatus}

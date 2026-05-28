@@ -82,6 +82,13 @@ export function getBookingWindow(booking) {
   return { start, end }
 }
 
+/** ¿Dos turnos se superponen en el tiempo? */
+export function bookingsOverlap(a, b) {
+  const wa = getBookingWindow(a)
+  const wb = getBookingWindow(b)
+  return wa.start < wb.end && wa.end > wb.start
+}
+
 /** Confirmada dentro del horario → columna En juego (solo UI; backend sigue CONFIRMADA). */
 export function resolveBookingDisplayStatus(booking, now = new Date()) {
   const stored = booking.status
@@ -117,9 +124,60 @@ export function filterBookingsForUser(bookings, user) {
   })
 }
 
+export function courtPkFromId(courtId) {
+  const digits = String(courtId ?? '').replace(/\D/g, '')
+  return digits || String(courtId)
+}
+
+/**
+ * Une disponibilidad del servidor con reservas activas ya cargadas en la app
+ * (p. ej. confirmadas tras el pago antes de que el GET de disponibilidad refleje el cambio).
+ */
+export function mergeOccupiedSlots(apiSlots, localBookings, courtId, dateStr) {
+  const courtNum = courtPkFromId(courtId)
+  const byId = new Map()
+
+  for (const b of apiSlots || []) {
+    if (b?.id != null) byId.set(String(b.id), b)
+  }
+
+  for (const b of localBookings || []) {
+    if (!b || !isSlotBlockingStatus(b.status)) continue
+    if (courtPkFromId(b.courtId) !== courtNum) continue
+    if (b.date !== dateStr) continue
+    byId.set(String(b.id), { ...b, courtId: courtNum, date: dateStr })
+  }
+
+  return [...byId.values()]
+}
+
+/** Mediodía UTC del día (mismo criterio que fecha_reserva en POST y ?dia= en disponibilidad). */
 export function dateStringToEpochMs(dateStr) {
   const [y, mo, d] = (dateStr || '').split('-').map(Number)
-  return new Date(y, mo - 1, d, 12, 0, 0, 0).getTime()
+  if (!y || !mo || !d) return NaN
+  return Date.UTC(y, mo - 1, d, 12, 0, 0, 0)
+}
+
+/** Marca cada franja de TIME_SLOTS que se solapa con una reserva activa (desde API disponibilidad). */
+export function buildBookedSlotsMap(timeSlots, dateStr, occupiedBookings) {
+  const statusMap = {}
+  if (!dateStr || !Array.isArray(occupiedBookings)) return statusMap
+
+  for (const slot of timeSlots) {
+    const parts = slot.split(' - ').map((s) => s.trim())
+    if (parts.length < 2) continue
+    const probe = { date: dateStr, time: slot, durationHours: 1 }
+
+    for (const booking of occupiedBookings) {
+      if (!isSlotBlockingStatus(booking.status)) continue
+      const b = { ...booking, date: dateStr }
+      if (bookingsOverlap(probe, b)) {
+        statusMap[slot] = booking.status || 'confirmed'
+        break
+      }
+    }
+  }
+  return statusMap
 }
 
 export function matchesStudentSearch(student, term) {
@@ -138,10 +196,39 @@ export function matchesStudentSearch(student, term) {
   )
 }
 
+export function isPastBookingEnd(booking, now = new Date()) {
+  const { end } = getBookingWindow(booking)
+  return now.getTime() >= end.getTime()
+}
+
+/** Turno confirmado/en juego ya terminó → marcar COMPLETADA en servidor. */
 export function shouldFinalizeTurn(booking, now = new Date()) {
   const stored = booking.status
   if (stored === 'cancelled' || stored === 'completed') return false
   if (stored !== 'confirmed' && stored !== 'live') return false
-  const { end } = getBookingWindow(booking)
-  return now.getTime() >= end.getTime()
+  return isPastBookingEnd(booking, now)
 }
+
+/** Pendiente impago y fecha pasada → cancelar en servidor. */
+export function shouldAutoCancelUnpaid(booking, now = new Date()) {
+  return booking.status === 'pending' && isPastBookingEnd(booking, now)
+}
+
+/** Columna del tablero kanban (turnos vencidos → historial). */
+export function getKanbanColumnId(booking, now = new Date()) {
+  const stored = booking.status
+  if (stored === 'cancelled' || stored === 'completed') return 'completed'
+  if (
+    isPastBookingEnd(booking, now) &&
+    (stored === 'confirmed' || stored === 'live' || stored === 'pending')
+  ) {
+    return 'completed'
+  }
+  return resolveBookingDisplayStatus(booking, now)
+}
+
+/** Horario ocupado en el servidor (PENDIENTE / CONFIRMADA). */
+export function isSlotBlockingStatus(status) {
+  return status === 'pending' || status === 'confirmed' || status === 'live'
+}
+

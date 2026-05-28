@@ -61,7 +61,16 @@ function KanbanCard({ booking, onCancelBooking, onDelete, onConfirmPayment }) {
         </button>
       )}
       
-      <div className="card-court-name">{courtName}</div>
+      <div className="card-court-name">
+        {courtName}
+        <span
+          className="card-reserva-id"
+          title="ID en el servidor (para Swagger / cambiar_estado)"
+          style={{ marginLeft: '0.35rem', fontSize: '0.7rem', opacity: 0.55, fontWeight: 500 }}
+        >
+          #{booking.id}
+        </span>
+      </div>
       
       <div className="card-meta">
         <div className="card-meta-item">

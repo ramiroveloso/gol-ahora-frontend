@@ -15,7 +15,11 @@ import ProfileModal from './components/ProfileModal.jsx'
 import PaymentModal from './components/PaymentModal.jsx'
 import { api } from './services/api.js'
 import { DEFAULT_COURTS } from './data/catalogDefaults.js'
-import { shouldFinalizeTurn, filterBookingsForUser } from './utils/bookingRules.js'
+import {
+  shouldFinalizeTurn,
+  shouldAutoCancelUnpaid,
+  filterBookingsForUser,
+} from './utils/bookingRules.js'
 
 export const TIME_SLOTS = [
   '08:00 - 09:00', '09:00 - 10:00', '10:00 - 11:00', '11:00 - 12:00',
@@ -83,8 +87,10 @@ function App() {
     if (!currentUser || bookings.length === 0) return
 
     const finalizeDueTurns = async () => {
-      const due = bookings.filter((b) => shouldFinalizeTurn(b))
-      for (const booking of due) {
+      const toFinalize = bookings.filter((b) => shouldFinalizeTurn(b))
+      const toCancelUnpaid = bookings.filter((b) => shouldAutoCancelUnpaid(b))
+
+      for (const booking of toFinalize) {
         if (finalizingIdsRef.current.has(booking.id)) continue
         finalizingIdsRef.current.add(booking.id)
         try {
@@ -92,6 +98,23 @@ function App() {
           setBookings((prev) => prev.map((b) => (b.id === booking.id ? updated : b)))
         } catch (err) {
           console.warn('No se pudo finalizar la reserva', booking.id, err)
+        } finally {
+          finalizingIdsRef.current.delete(booking.id)
+        }
+      }
+
+      for (const booking of toCancelUnpaid) {
+        if (finalizingIdsRef.current.has(booking.id)) continue
+        finalizingIdsRef.current.add(booking.id)
+        try {
+          const updated = await api.cancelBooking(booking.id, booking)
+          setBookings((prev) =>
+            prev.map((b) =>
+              b.id === booking.id ? { ...updated, status: 'cancelled', totalPrice: 0 } : b,
+            ),
+          )
+        } catch (err) {
+          console.warn('No se pudo cancelar reserva vencida', booking.id, err)
         } finally {
           finalizingIdsRef.current.delete(booking.id)
         }
@@ -157,7 +180,7 @@ function App() {
       setBookings((prev) =>
         prev.map((b) => (b.id === bookingId ? { ...updated, status: 'cancelled', totalPrice: 0 } : b)),
       )
-      showToast('Reserva cancelada', 'info')
+      showToast('Reserva cancelada. El horario quedó liberado.', 'info')
     } catch (err) {
       showToast(err.message || 'Error al cancelar la reserva', 'error')
     }
@@ -174,13 +197,18 @@ function App() {
   }
 
   const handleAddBooking = async (bookingData) => {
+    const createdBooking = await api.createBooking(bookingData)
+    setBookings((prev) => [...prev, createdBooking])
+    showToast('Reserva creada. Completá el pago para confirmarla.', 'success')
+  }
+
+  const handleOpenBooking = async () => {
     try {
-      const createdBooking = await api.createBooking(bookingData)
-      setBookings((prev) => [...prev, createdBooking])
-      showToast('Reserva creada. Completá el pago para confirmarla.', 'success')
-    } catch (err) {
-      showToast(err.message || 'Error al registrar la reserva', 'error')
+      await handleRefreshBookings()
+    } catch {
+      /* el drawer igual puede abrirse con datos en caché */
     }
+    setIsBookingOpen(true)
   }
 
   const handleUserUpdate = (user) => {
@@ -191,9 +219,15 @@ function App() {
     setPaymentBooking(booking)
   }
 
-  const handlePaymentSuccess = ({ booking }) => {
-    setBookings((prev) => prev.map((b) => (b.id === booking.id ? booking : b)))
+  const handlePaymentSuccess = async ({ booking }) => {
+    const confirmed = { ...booking, status: 'confirmed' }
+    setBookings((prev) => prev.map((b) => (b.id === confirmed.id ? confirmed : b)))
     setPaymentBooking(null)
+    try {
+      await handleRefreshBookings()
+    } catch {
+      /* la reserva confirmada ya quedó en estado local */
+    }
   }
 
   if (loading) {
@@ -261,7 +295,7 @@ function App() {
                   currentUser.role === 'administrador' ? handleDeleteBooking : undefined
                 }
                 onUpdateBookingStatus={handleUpdateBookingStatus}
-                onOpenBooking={() => setIsBookingOpen(true)}
+                onOpenBooking={handleOpenBooking}
                 onRequestPayment={handleRequestPayment}
               />
             )}
@@ -321,6 +355,7 @@ function App() {
           courts={courts}
           allBookings={bookings}
           onAddBooking={handleAddBooking}
+          showToast={showToast}
         />
       )}
 
