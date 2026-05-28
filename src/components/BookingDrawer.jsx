@@ -7,6 +7,9 @@ import {
   getMaxDurationLabel,
   getConsecutiveSlots,
   formatTimeRange,
+  buildBookedSlotsMap,
+  bookingsOverlap,
+  isSlotBlockingStatus,
 } from '../utils/bookingRules.js'
 
 const COURT_TYPE_FILTERS = [
@@ -18,15 +21,15 @@ const COURT_TYPE_FILTERS = [
   { value: 'TENIS', label: 'Tenis' },
 ]
 
-function getSlotsOccupiedByBooking(booking, timeSlots) {
-  const hours = booking.durationHours || 1
-  const startPart = booking.time?.split(' - ')[0]
-  const startSlot = timeSlots.find((s) => s.startsWith(startPart))
-  if (!startSlot) return [booking.time]
-  return getConsecutiveSlots(startSlot, hours, timeSlots) || [booking.time]
-}
-
-function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, allBookings, onAddBooking }) {
+function BookingDrawer({
+  isOpen,
+  onClose,
+  currentUser,
+  courts = DEFAULT_COURTS,
+  allBookings,
+  onAddBooking,
+  showToast,
+}) {
   const getTodayDateString = () => new Date().toISOString().split('T')[0]
 
   const [selectedCourtId, setSelectedCourtId] = useState(courts[0]?.id)
@@ -34,7 +37,10 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null)
   const [durationHours, setDurationHours] = useState(1)
   const [isClosing, setIsClosing] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [occupiedSlots, setOccupiedSlots] = useState([])
+  const [loadingAvailability, setLoadingAvailability] = useState(false)
+  const [availabilityError, setAvailabilityError] = useState(null)
   const [extras, setExtras] = useState({ referee: false, ball: false, lights: false, bibs: false })
   const [tipoCanchaFilter, setTipoCanchaFilter] = useState('')
   const [filteredCourts, setFilteredCourts] = useState(courts)
@@ -70,16 +76,30 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
   }, [])
 
   useEffect(() => {
+    if (!isOpen || !selectedCourtId || !selectedDate) return
+
     const fetchOccupied = async () => {
+      setLoadingAvailability(true)
+      setAvailabilityError(null)
       try {
-        const data = await api.getOccupiedBookings(selectedDate)
+        const data = await api.getOccupiedSlotsForCourt(selectedCourtId, selectedDate, {
+          localBookings: allBookings,
+        })
         setOccupiedSlots(data)
       } catch (err) {
-        console.error('Error fetching occupied slots:', err)
+        console.warn('Disponibilidad:', err.message)
+        setOccupiedSlots([])
+        const msg =
+          err?.status === 401 || err?.status === 403
+            ? 'Iniciá sesión para ver horarios disponibles.'
+            : err?.message || 'No se pudo cargar la disponibilidad del servidor.'
+        setAvailabilityError(msg)
+      } finally {
+        setLoadingAvailability(false)
       }
     }
-    if (isOpen) fetchOccupied()
-  }, [isOpen, selectedDate])
+    fetchOccupied()
+  }, [isOpen, selectedCourtId, selectedDate, allBookings])
 
   useEffect(() => {
     setSelectedTimeSlot(null)
@@ -98,21 +118,10 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
   const selectedCourt = filteredCourts.find((c) => c.id === selectedCourtId)
   const maxDurationHours = getMaxDurationHours(selectedCourt)
 
-  const bookedSlots = useMemo(() => {
-    const statusMap = {}
-    const merge = (list) => {
-      list
-        .filter((b) => b.courtId === selectedCourtId && b.date === selectedDate && b.status !== 'completed')
-        .forEach((b) => {
-          getSlotsOccupiedByBooking(b, TIME_SLOTS).forEach((slot) => {
-            statusMap[slot] = b.status
-          })
-        })
-    }
-    merge(allBookings)
-    merge(occupiedSlots)
-    return statusMap
-  }, [allBookings, occupiedSlots, selectedCourtId, selectedDate])
+  const bookedSlots = useMemo(
+    () => buildBookedSlotsMap(TIME_SLOTS, selectedDate, occupiedSlots),
+    [occupiedSlots, selectedDate],
+  )
 
   const isSlotInThePast = (slot) => {
     if (selectedDate !== getTodayDateString()) return false
@@ -120,7 +129,8 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
     return parseInt(slot.split(':')[0], 10) <= currentHour
   }
 
-  const isSlotFree = (slot) => !bookedSlots[slot] && !isSlotInThePast(slot)
+  const isSlotFree = (slot) =>
+    !availabilityError && !bookedSlots[slot] && !isSlotInThePast(slot)
 
   const canUseDuration = (hours) => {
     if (!selectedTimeSlot) return false
@@ -144,8 +154,14 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
     return total
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    if (submitting) return
+    if (availabilityError) {
+      if (showToast) showToast(availabilityError, 'error')
+      else alert(availabilityError)
+      return
+    }
     if (!selectedCourt || !selectedDate || !selectedTimeSlot) {
       alert('Por favor, selecciona un horario disponible')
       return
@@ -161,20 +177,62 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
     if (extras.lights) selectedExtrasList.push('Reflectores LED')
     if (extras.bibs) selectedExtrasList.push('Chalecos de Equipo')
 
-    onAddBooking({
-      id: `booking-${Date.now()}`,
-      userEmail: currentUser.email,
-      courtId: selectedCourt.id,
-      courtName: selectedCourt.name,
-      type: selectedCourt.type,
-      date: selectedDate,
-      time: formatTimeRange(selectedSlots),
-      durationHours,
-      extras: selectedExtrasList,
-      totalPrice: calculateTotalPrice(),
-      status: 'pending',
-    })
-    handleClose()
+    setSubmitting(true)
+    try {
+      const fresh = await api.getOccupiedSlotsForCourt(selectedCourt.id, selectedDate, {
+        localBookings: allBookings,
+      })
+      setOccupiedSlots(fresh)
+      const timeRange = formatTimeRange(selectedSlots)
+      const probe = {
+        courtId: selectedCourt.id,
+        date: selectedDate,
+        time: timeRange,
+        durationHours,
+      }
+      const conflict = fresh.find(
+        (b) =>
+          isSlotBlockingStatus(b.status) &&
+          bookingsOverlap(probe, { ...b, date: selectedDate }),
+      )
+      if (conflict) {
+        throw new Error(
+          `Horario no disponible según el servidor (reserva #${conflict.id}). Elegí otro turno.`,
+        )
+      }
+
+      await onAddBooking({
+        id: `booking-${Date.now()}`,
+        userEmail: currentUser.email,
+        courtId: selectedCourt.id,
+        courtName: selectedCourt.name,
+        type: selectedCourt.type,
+        date: selectedDate,
+        time: formatTimeRange(selectedSlots),
+        durationHours,
+        extras: selectedExtrasList,
+        totalPrice: calculateTotalPrice(),
+        status: 'pending',
+      })
+      handleClose()
+    } catch (err) {
+      const msg = err?.message || 'No se pudo crear la reserva'
+      if (selectedCourt?.id && selectedDate) {
+        try {
+          const fresh = await api.getOccupiedSlotsForCourt(selectedCourt.id, selectedDate, {
+            localBookings: allBookings,
+          })
+          setOccupiedSlots(fresh)
+          setAvailabilityError(null)
+        } catch {
+          /* mantener grilla anterior */
+        }
+      }
+      if (showToast) showToast(msg, 'error')
+      else alert(msg)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -272,6 +330,16 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
               </div>
               <div className="form-group">
                 <label>Horario de inicio</label>
+                {loadingAvailability ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 0.5rem' }}>
+                    Consultando disponibilidad en el servidor…
+                  </p>
+                ) : null}
+                {availabilityError ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--danger, #e74c3c)', margin: '0 0 0.5rem' }}>
+                    {availabilityError}
+                  </p>
+                ) : null}
                 <div className="time-slots-grid">
                   {TIME_SLOTS.map((slot) => {
                     const status = bookedSlots[slot]
@@ -369,8 +437,8 @@ function BookingDrawer({ isOpen, onClose, currentUser, courts = DEFAULT_COURTS, 
               </span>
               <span className="total-price">${calculateTotalPrice().toFixed(2)}</span>
             </div>
-            <button type="submit" className="btn btn-primary" id="confirm-booking-btn">
-              <span>Confirmar Reserva</span>
+            <button type="submit" className="btn btn-primary" id="confirm-booking-btn" disabled={submitting}>
+              <span>{submitting ? 'Guardando...' : 'Confirmar Reserva'}</span>
               <span className="material-symbols-outlined">check_circle</span>
             </button>
           </div>

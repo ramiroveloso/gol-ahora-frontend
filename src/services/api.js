@@ -1,36 +1,99 @@
-import { dateStringToEpochMs } from '../utils/bookingRules.js'
+import {
+  dateStringToEpochMs,
+  isSlotBlockingStatus,
+  bookingsOverlap,
+  mergeOccupiedSlots,
+} from '../utils/bookingRules.js'
 import { formatApiError } from '../utils/apiErrors.js'
 
 const PROTOCOL = import.meta.env.VITE_API_PROTOCOL || 'http'
 const DOMAIN = import.meta.env.VITE_API_DOMAIN || 'localhost'
 const PORT = import.meta.env.VITE_API_PORT || '8000'
-const API_URL = import.meta.env.VITE_API_URL || `${PROTOCOL}://${DOMAIN}:${PORT}/api`
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? '/api' : `${PROTOCOL}://${DOMAIN}:${PORT}/api`)
+const CSRF_STORAGE_KEY = `csrftoken:${API_URL}`
 
 /** Siempre false: conexión al backend Django (sesión + CSRF). */
 export const isMockMode = false
 
-function getCsrfToken() {
+function isCrossOriginApi() {
+  try {
+    return new URL(API_URL).origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
+function readCsrfFromDocumentCookie() {
   const name = 'csrftoken'
   if (!document.cookie) return null
-  const cookies = document.cookie.split(';')
-  for (let i = 0; i < cookies.length; i++) {
-    const cookie = cookies[i].trim()
-    if (cookie.substring(0, name.length + 1) === `${name}=`) {
-      return decodeURIComponent(cookie.substring(name.length + 1))
+  for (const part of document.cookie.split(';')) {
+    const cookie = part.trim()
+    if (cookie.startsWith(`${name}=`)) {
+      return decodeURIComponent(cookie.slice(name.length + 1))
     }
   }
   return null
 }
 
-async function request(endpoint, options = {}) {
+function clearCsrfToken() {
+  sessionStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+function setCsrfToken(token) {
+  if (token) sessionStorage.setItem(CSRF_STORAGE_KEY, token)
+  else clearCsrfToken()
+}
+
+/** La cookie del navegador manda sobre sessionStorage (evita token viejo tras login/cancelar). */
+function getCsrfToken() {
+  const fromCookie = readCsrfFromDocumentCookie()
+  if (fromCookie) {
+    const stored = sessionStorage.getItem(CSRF_STORAGE_KEY)
+    if (stored !== fromCookie) setCsrfToken(fromCookie)
+    return fromCookie
+  }
+  return sessionStorage.getItem(CSRF_STORAGE_KEY)
+}
+
+function isCsrfError(status, detail) {
+  if (status !== 403) return false
+  return String(detail || '').toLowerCase().includes('csrf')
+}
+
+async function fetchCsrfTokenInternal() {
+  try {
+    const response = await fetch(`${API_URL}/auth/csrf/`, {
+      method: 'GET',
+      credentials: 'include',
+    })
+    if (response.ok) {
+      const data = await response.json().catch(() => ({}))
+      if (data.csrfToken) setCsrfToken(data.csrfToken)
+    }
+    const fromCookie = readCsrfFromDocumentCookie()
+    if (fromCookie) setCsrfToken(fromCookie)
+  } catch (error) {
+    console.warn('CSRF:', error)
+  }
+}
+
+async function ensureCsrfToken() {
+  await fetchCsrfTokenInternal()
+  return getCsrfToken()
+}
+
+async function request(endpoint, options = {}, csrfRetried = false) {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {}),
   }
 
   const method = (options.method || 'GET').toUpperCase()
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-    const csrfToken = getCsrfToken()
+  const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+  if (isMutating) {
+    const csrfToken = await ensureCsrfToken()
     if (csrfToken) headers['X-CSRFToken'] = csrfToken
   }
 
@@ -53,12 +116,28 @@ async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
+    if (!csrfRetried && isMutating && isCsrfError(response.status, data.detail)) {
+      clearCsrfToken()
+      await fetchCsrfTokenInternal()
+      return request(endpoint, options, true)
+    }
+
     const errorMsg =
       data.detail ||
       data.error ||
       (typeof data === 'object' ? JSON.stringify(data) : data) ||
       `Error ${response.status} en la petición.`
-    throw new Error(formatApiError({ message: typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg) }))
+    const e = new Error(
+      formatApiError({
+        message: typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg),
+        data,
+        status: response.status,
+      }),
+    )
+    e.status = response.status
+    e.url = `${API_URL}${endpoint}`
+    e.data = data
+    throw e
   }
 
   return data
@@ -101,13 +180,14 @@ function mapDjangoRole(rol) {
 }
 
 function mapFrontStatus(estado) {
+  const key = String(estado ?? '').toUpperCase()
   const map = {
     PENDIENTE: 'pending',
     CONFIRMADA: 'confirmed',
     CANCELADA: 'cancelled',
     COMPLETADA: 'completed',
   }
-  return map[estado] || 'pending'
+  return map[key] || 'pending'
 }
 
 /** Estados del kanban/UI → valores del backend (EstadoEnum). */
@@ -132,26 +212,207 @@ function msToTimeRange(horaInicio, horaFin) {
   return `${fmt(start)} - ${fmt(end)}`
 }
 
-function parseBookingToDjango(booking, userId) {
-  const [startPart] = (booking.time || '08:00 - 09:00').split(' - ')
-  const [h, m] = startPart.split(':').map(Number)
-  const start = new Date(`${booking.date}T${String(h).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}:00`)
-  const startMs = start.getTime()
-  const endMs = startMs + (booking.durationHours || 1) * 3600000
+/** Inicio/fin del turno en ms (hora local), alineado con Swagger. */
+function bookingWindowToEpochMs(dateStr, timeRange, durationHours = 1) {
+  const [startPart, endPart] = (timeRange || '08:00 - 09:00').split(' - ').map((s) => s.trim())
+  const [y, mo, d] = (dateStr || '').split('-').map(Number)
+  const [sh, sm] = startPart.split(':').map(Number)
+  const start = new Date(y, mo - 1, d, sh, sm || 0, 0, 0)
+  let end
+  if (endPart) {
+    const [eh, em] = endPart.split(':').map(Number)
+    end = new Date(y, mo - 1, d, eh, em || 0, 0, 0)
+  } else {
+    end = new Date(start.getTime() + durationHours * 3600000)
+  }
+  return { startMs: start.getTime(), endMs: end.getTime() }
+}
 
+/** Mediodía UTC del día del turno (misma lógica que EpochMillisecondsField en Django). */
+function fechaReservaMsFromStart(startMs) {
+  const t = new Date(startMs)
+  return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 12, 0, 0, 0)
+}
+
+/**
+ * Valor de fecha_reserva para POST /reservas/ sin romper la respuesta del backend.
+ * Si el string es solo dígitos, Django guarda datetime.date y falla al serializar (500).
+ * Un espacio al final hace que use el datetime validado del serializer.
+ */
+function fechaReservaForCreatePayload(startMs) {
+  return `${fechaReservaMsFromStart(startMs)} `
+}
+
+function courtPkFromId(courtId) {
+  const digits = String(courtId ?? '').replace(/\D/g, '')
+  return digits || String(courtId)
+}
+
+function bookingProbe(bookingData) {
+  const courtNum = String(bookingData.courtId ?? '').replace(/\D/g, '')
+  return {
+    courtId: courtNum,
+    date: bookingData.date,
+    time: bookingData.time,
+    durationHours: bookingData.durationHours || 1,
+  }
+}
+
+function fechaReservaSameDay(a, b) {
+  const da = new Date(Number(a))
+  const db = new Date(Number(b))
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false
+  return (
+    da.getUTCFullYear() === db.getUTCFullYear() &&
+    da.getUTCMonth() === db.getUTCMonth() &&
+    da.getUTCDate() === db.getUTCDate()
+  )
+}
+
+/** Misma clave única del backend: cancha + fecha_reserva + hora_inicio. */
+function rawMatchesCreatePayload(raw, payload, bookingData) {
+  if (Number(raw.cancha) !== Number(payload.cancha)) return false
+  if (Number(raw.hora_inicio) !== Number(payload.hora_inicio)) return false
+  if (fechaReservaSameDay(raw.fecha_reserva, payload.fecha_reserva)) return true
+  if (bookingData?.date && epochMsToLocalDateStr(raw.fecha_reserva) === bookingData.date) {
+    return true
+  }
+  return false
+}
+
+async function listAllReservas() {
+  const data = await request('/bookings/reservas/')
+  return Array.isArray(data) ? data : data.results || []
+}
+
+/** Fila existente en el mismo slot exacto (cancelada/completada bloquean POST → 500). */
+async function findExactSlotReservation(bookingData, userId) {
+  let payload
+  try {
+    payload = parseBookingToDjango(bookingData, userId)
+  } catch {
+    return null
+  }
+
+  for (const raw of await listAllReservas()) {
+    if (!rawMatchesCreatePayload(raw, payload, bookingData)) continue
+    return mapDjangoReserva(raw)
+  }
+  return null
+}
+
+/** Cancelada/completada que solapa (reservas viejas con fecha distinta). */
+async function findGhostReservationAtSlot(bookingData) {
+  const probe = bookingProbe(bookingData)
+  if (!probe.courtId || !probe.date) return null
+
+  for (const raw of await listAllReservas()) {
+    const b = mapDjangoReserva(raw)
+    if (b.status !== 'cancelled' && b.status !== 'completed') continue
+    if (String(b.courtId) !== probe.courtId) continue
+    if (bookingsOverlap(probe, b)) return b
+  }
+  return null
+}
+
+async function reactivateCancelledBooking(ghost, bookingData) {
+  const reactivated = await api.updateBookingStatus(ghost.id, 'pending', {
+    ...ghost,
+    ...bookingData,
+  })
+  const merged = mergeBookingFromClient({ ...reactivated, status: 'pending' }, bookingData)
+  return enrichBookingPrice(merged, [])
+}
+
+/**
+ * Elimina o reactiva reservas fantasma antes del POST (evita 500 por unique_cancha_fecha_hora).
+ * @returns {Promise<object|null>} reserva si se reactivó; null si no había fantasma o se borró
+ */
+async function resolveGhostBeforePost(bookingData, userId) {
+  const exact = await findExactSlotReservation(bookingData, userId)
+  const ghost = exact || (await findGhostReservationAtSlot(bookingData))
+  if (!ghost) return null
+
+  if (ghost.status === 'cancelled' && String(ghost.userId) === String(userId)) {
+    return reactivateCancelledBooking(ghost, bookingData)
+  }
+
+  if (isSlotBlockingStatus(ghost.status)) {
+    throw new Error(
+      `Horario no disponible (reserva #${ghost.id} ${ghost.status === 'pending' ? 'pendiente' : 'confirmada'}). Actualizá la grilla.`,
+    )
+  }
+
+  try {
+    await api.deleteBooking(ghost.id)
+  } catch (delErr) {
+    if (ghost.status === 'cancelled' && String(ghost.userId) === String(userId)) {
+      return reactivateCancelledBooking(ghost, bookingData)
+    }
+    console.warn('No se pudo eliminar reserva #' + ghost.id, delErr)
+    throw new Error(
+      `No se pudo liberar el turno (reserva #${ghost.id}, estado ${ghost.status}). Probá otro horario o pedí ayuda al administrador.`,
+    )
+  }
+  return null
+}
+
+async function postNewReserva(bookingData, userId) {
+  const payload = parseBookingToDjango(bookingData, userId)
+  const created = await request('/bookings/reservas/', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const mapped = mergeBookingFromClient(mapDjangoReserva(created), bookingData)
+  return enrichBookingPrice(mapped, [])
+}
+
+async function assertSlotAvailable(bookingData) {
+  const candidate = bookingProbe(bookingData)
+  const occupied = await api.getOccupiedSlotsForCourt(bookingData.courtId, bookingData.date)
+  const conflict = occupied.find(
+    (b) => isSlotBlockingStatus(b.status) && bookingsOverlap(candidate, b),
+  )
+  if (conflict) {
+    throw new Error(
+      `Horario no disponible (reserva #${conflict.id} ${conflict.status === 'pending' ? 'pendiente' : 'confirmada'}). Elegí otro turno según la grilla.`,
+    )
+  }
+}
+
+function parseBookingToDjango(booking, userId) {
+  if (!userId) {
+    throw new Error('Tenés que iniciar sesión para reservar.')
+  }
+  const courtNum = String(booking.courtId ?? '').replace(/\D/g, '')
+  if (!courtNum) {
+    throw new Error('Seleccioná una cancha válida del listado.')
+  }
+  const { startMs, endMs } = bookingWindowToEpochMs(
+    booking.date,
+    booking.time,
+    booking.durationHours || 1,
+  )
   return {
     usuario: Number(userId),
-    cancha: Number(String(booking.courtId).replace(/\D/g, '') || booking.courtId),
-    fecha_reserva: startMs,
+    cancha: Number(courtNum),
+    fecha_reserva: fechaReservaForCreatePayload(startMs),
     hora_inicio: startMs,
     hora_fin: endMs,
   }
 }
 
+function epochMsToLocalDateStr(ms) {
+  const d = new Date(Number(ms))
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${mo}-${day}`
+}
+
 function mapDjangoReserva(r) {
   const fecha = r.fecha_reserva ?? r.hora_inicio
-  const dateObj = new Date(Number(fecha))
-  const dateStr = dateObj.toISOString().split('T')[0]
+  const dateStr = epochMsToLocalDateStr(fecha)
   const durationMs = Number(r.hora_fin) - Number(r.hora_inicio)
   const durationHours = Math.max(1, Math.round(durationMs / 3600000))
   const precioHora = Number(r.precio_base_hora ?? r.cancha_precio ?? 0)
@@ -277,21 +538,20 @@ const PAYMENT_METHOD_MAP = {
 }
 
 export const api = {
-  fetchCsrfToken: async () => {
-    try {
-      await fetch(`${API_URL}/auth/login/`, { method: 'GET', credentials: 'include' })
-    } catch (error) {
-      console.warn('CSRF cookie:', error)
-    }
-  },
+  /** GET /api/auth/csrf/ — cookie csrftoken (misma origen vía proxy de Vite en local). */
+  fetchCsrfToken: fetchCsrfTokenInternal,
 
-  login: async (usernameOrEmail, password) => {
+  login: async (username, password) => {
+    await api.fetchCsrfToken()
     const data = await request('/auth/login/', {
       method: 'POST',
-      body: JSON.stringify({ username: usernameOrEmail, password }),
+      body: JSON.stringify({ username, password }),
     })
     const formattedUser = formatUser(data.user || data.data || data)
-    if (formattedUser) localStorage.setItem('user_data', JSON.stringify(formattedUser))
+    if (!formattedUser?.id) {
+      throw new Error('El servidor no devolvió datos de usuario tras el login.')
+    }
+    localStorage.setItem('user_data', JSON.stringify(formattedUser))
     return formattedUser
   },
 
@@ -349,17 +609,21 @@ export const api = {
       console.error('Error durante logout', err)
     } finally {
       localStorage.removeItem('user_data')
+      clearCsrfToken()
     }
   },
 
   getMe: async () => {
     const stored = localStorage.getItem('user_data')
     if (!stored) throw new Error('Sin sesión')
+    const parsed = JSON.parse(stored)
     try {
-      await request('/bookings/reservas/', { method: 'GET' })
-      return api.refreshSessionUser()
+      return await api.refreshSessionUser()
     } catch (err) {
-      localStorage.removeItem('user_data')
+      if (err?.status === 401 || err?.status === 403) {
+        localStorage.removeItem('user_data')
+        clearCsrfToken()
+      }
       throw err
     }
   },
@@ -405,60 +669,102 @@ export const api = {
   },
 
   /**
-   * GET /api/bookings/disponibilidad/?fecha=<epoch_ms>
-   * Devuelve bloques ocupados por cancha para una fecha.
+   * GET /api/fields/canchas/{id}/disponibilidad/?dia=<epoch_ms>
+   * Respuesta: { cancha, dia, reservas: [{ id, hora_inicio, hora_fin, estado, usuario }] }
    */
-  getAvailability: async (dateStr) => {
-    const fecha = dateStringToEpochMs(dateStr)
-    const data = await request(`/bookings/disponibilidad/?fecha=${fecha}`)
-    return Array.isArray(data) ? data : []
+  getCourtAvailability: async (courtId, dateStr) => {
+    const dia = dateStringToEpochMs(dateStr)
+    if (!Number.isFinite(dia)) {
+      throw new Error('Fecha inválida para consultar disponibilidad.')
+    }
+    const id = courtPkFromId(courtId)
+    return request(`/fields/canchas/${id}/disponibilidad/?dia=${dia}`)
   },
 
-  /** Convierte respuesta de disponibilidad a formato booking para el calendario de slots. */
-  mapAvailabilityToBookings(dateStr, canchasData) {
-    const bookings = []
-    for (const court of canchasData) {
-      for (const slot of court.horarios_ocupados || []) {
-        const time = msToTimeRange(slot.hora_inicio, slot.hora_fin)
-        const durationMs = Number(slot.hora_fin) - Number(slot.hora_inicio)
-        const durationHours = Math.max(1, Math.round(durationMs / 3600000))
-        bookings.push({
-          id: `avail-${court.cancha_id}-${slot.hora_inicio}`,
-          courtId: String(court.cancha_id),
-          courtName: `Cancha #${court.numero}`,
+  _mapCourtAvailabilityResponse(data, courtId, dateStr) {
+    const courtNumId = String(data.cancha?.id ?? courtPkFromId(courtId))
+    const numero = data.cancha?.numero
+    return (data.reservas || [])
+      .filter((r) => isSlotBlockingStatus(mapFrontStatus(r.estado)))
+      .map((r) => {
+        const hi = Number(r.hora_inicio)
+        const hf = Number(r.hora_fin)
+        if (!Number.isFinite(hi) || !Number.isFinite(hf)) return null
+        const durationMs = hf - hi
+        return {
+          id: String(r.id),
+          courtId: courtNumId,
+          courtName: numero != null ? `Cancha #${numero}` : `Cancha #${courtNumId}`,
           date: dateStr,
-          time,
-          durationHours,
-          status: 'confirmed',
-        })
-      }
-    }
-    return bookings
-  },
-
-  getOccupiedBookings: async (dateStr) => {
-    if (dateStr) {
-      const raw = await api.getAvailability(dateStr)
-      return api.mapAvailabilityToBookings(dateStr, raw)
-    }
-    const all = await api.getBookings()
-    return all.filter((b) => b.status !== 'completed' && b.status !== 'cancelled')
-  },
-
-  createBooking: async (bookingData) => {
-    const user = JSON.parse(localStorage.getItem('user_data') || '{}')
-    const payload = parseBookingToDjango(bookingData, user.id)
-    const created = await request('/bookings/reservas/', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-    const mapped = mergeBookingFromClient(mapDjangoReserva(created), bookingData)
-    return enrichBookingPrice(mapped, [])
+          time: msToTimeRange(hi, hf),
+          durationHours: Math.max(1, Math.round(durationMs / 3600000)),
+          status: mapFrontStatus(r.estado),
+        }
+      })
+      .filter(Boolean)
   },
 
   /**
-   * Cambia el estado de una reserva vía POST .../cambiar_estado/
-   * Body: { "estado": "PENDIENTE" | "CONFIRMADA" | "CANCELADA" | "COMPLETADA" }
+   * Horarios ocupados según GET /api/fields/canchas/{id}/disponibilidad/?dia=<epoch_ms>
+   * (solo PENDIENTE / CONFIRMADA, como Swagger).
+   */
+  getOccupiedSlotsForCourt: async (courtId, dateStr, { localBookings } = {}) => {
+    const dia = dateStringToEpochMs(dateStr)
+    if (!Number.isFinite(dia)) {
+      throw new Error('Fecha inválida para consultar disponibilidad.')
+    }
+
+    const data = await api.getCourtAvailability(courtId, dateStr)
+    const fromApi = api._mapCourtAvailabilityResponse(data, courtId, dateStr)
+    return mergeOccupiedSlots(fromApi, localBookings, courtId, dateStr)
+  },
+
+  createBooking: async (bookingData) => {
+    await assertSlotAvailable(bookingData)
+    const user = JSON.parse(localStorage.getItem('user_data') || '{}')
+    if (!user.id) {
+      throw new Error('Tenés que iniciar sesión para reservar.')
+    }
+
+    const reactivated = await resolveGhostBeforePost(bookingData, user.id)
+    if (reactivated) return reactivated
+
+    try {
+      return await postNewReserva(bookingData, user.id)
+    } catch (err) {
+      const detail = String(err?.data?.detail || err?.message || '')
+      if (
+        err?.status === 400 &&
+        detail.toLowerCase().includes('ya se encuentra reservada')
+      ) {
+        throw new Error(
+          'Ese horario ya está reservado (pendiente o confirmada). Actualizá la grilla y elegí otro turno.',
+        )
+      }
+      if (err?.status === 500) {
+        try {
+          const again = await resolveGhostBeforePost(bookingData, user.id)
+          if (again) return again
+          return await postNewReserva(bookingData, user.id)
+        } catch (retryErr) {
+          const exact = await findExactSlotReservation(bookingData, user.id)
+          if (exact) {
+            throw new Error(
+              `No se pudo crear la reserva: el turno #${exact.id} (${exact.status}) sigue ocupando este horario en el servidor. Elegí otro horario o contactá al administrador.`,
+            )
+          }
+          throw new Error(
+            'Error interno al crear la reserva (500). Revisá la consola del backend o probá otro horario.',
+          )
+        }
+      }
+      throw err
+    }
+  },
+
+  /**
+   * POST /api/bookings/reservas/{id}/cambiar_estado/
+   * Body: { "estado": "PENDIENTE" | "CONFIRMADA" | "CANCELADA" } (según Swagger actual).
    */
   updateBookingStatus: async (id, status, previousBooking = null) => {
     const djangoEstado = mapDjangoStatus(status)
@@ -467,14 +773,21 @@ export const api = {
       body: JSON.stringify({ estado: djangoEstado }),
     })
     const mapped = mapDjangoReserva(data)
-    return previousBooking
-      ? mergeBookingFromClient(mapped, previousBooking)
-      : mapped
+    return previousBooking ? mergeBookingFromClient(mapped, previousBooking) : mapped
   },
 
-  /** Al terminar el turno: POST cambiar_estado con COMPLETADA (mismo flujo que confirmar pago). */
+  /**
+   * Turno finalizado → COMPLETADA si el backend lo admite; si no, solo actualización en UI.
+   */
   finalizeBooking: async (booking) => {
-    return api.updateBookingStatus(booking.id, 'completed', booking)
+    try {
+      return await api.updateBookingStatus(booking.id, 'completed', booking)
+    } catch (err) {
+      if (err?.status === 400) {
+        return { ...booking, status: 'completed' }
+      }
+      throw err
+    }
   },
 
   /** Cancelar vía cambiar_estado → CANCELADA (preferido sobre DELETE). */
@@ -550,6 +863,7 @@ export const api = {
     })
 
     const updatedBooking = await api.updateBookingStatus(bookingId, 'confirmed', booking)
+    const confirmedBooking = { ...updatedBooking, status: 'confirmed' }
 
     let reciboApi = null
     const reciboId = approved.recibo?.id ?? approved.recibo
@@ -562,7 +876,7 @@ export const api = {
     }
 
     return {
-      booking: updatedBooking,
+      booking: confirmedBooking,
       recibo: {
         id: reciboApi?.id ?? reciboId ?? cobro.id,
         numero: reciboApi?.id ?? reciboId ?? cobro.id,

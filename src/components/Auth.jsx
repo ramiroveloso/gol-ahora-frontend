@@ -32,6 +32,7 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
     setSubmitting(true)
     try {
       const user = await api.login(loginEmail.trim(), loginPassword)
+      if (!user) throw new Error('No se pudo iniciar sesión.')
       onLoginSuccess(user)
       showToast('¡Sesión iniciada correctamente!', 'success')
     } catch (err) {
@@ -159,7 +160,7 @@ function Auth({ onLoginSuccess, showToast, theme = 'dark', onToggleTheme }) {
                   type="text"
                   id="login-email"
                   required
-                  placeholder="Ej: profesor o profe@gol.com"
+                  placeholder="usuario o email"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
                   autoComplete="username"

@@ -1,5 +1,6 @@
 import React from 'react'
 import KanbanColumn from './KanbanColumn.jsx'
+import { getKanbanColumnId } from '../utils/bookingRules.js'
 
 const COLUMNS = [
   { id: 'pending', title: 'Pendientes / Borrador', indicatorClass: 'indicator-pending' },
@@ -14,6 +15,7 @@ function KanbanBoard({
   onDeleteBooking,
   onUpdateBookingStatus,
   onRequestPayment,
+  now = new Date(),
 }) {
   const handleConfirmPayment = (booking) => {
     if (onRequestPayment) onRequestPayment(booking)
@@ -24,10 +26,7 @@ function KanbanBoard({
     <div className="kanban-container">
       <div className="kanban-board">
         {COLUMNS.map(col => {
-          const columnBookings =
-            col.id === 'completed'
-              ? bookings.filter((b) => b.status === 'completed' || b.status === 'cancelled')
-              : bookings.filter((b) => b.status === col.id)
+          const columnBookings = bookings.filter((b) => getKanbanColumnId(b, now) === col.id)
           return (
             <KanbanColumn 
               key={col.id}
