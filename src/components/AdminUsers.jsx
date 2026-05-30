@@ -7,6 +7,9 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
   const [searchTerm, setSearchTerm] = useState('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [editingUser, setEditingUser] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', email: '', role: 'cliente', activo: true, telefono: '' })
+  const [savingEdit, setSavingEdit] = useState(false)
 
   // Fetch users from API
   const fetchUsers = async () => {
@@ -25,7 +28,32 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
     fetchUsers()
   }, [])
 
-  // Handle User Deletion (Cascade)
+  const openEditUser = (user) => {
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      activo: user.activo !== false,
+      telefono: user.telefono || '',
+    })
+    setEditingUser(user)
+  }
+
+  const handleSaveUser = async () => {
+    if (!editingUser) return
+    setSavingEdit(true)
+    try {
+      await api.adminUpdateUser(editingUser.id, editForm)
+      showToast('Usuario actualizado.', 'success')
+      setEditingUser(null)
+      await fetchUsers()
+    } catch (err) {
+      showToast(err.message || 'No se pudo actualizar el usuario', 'error')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   const handleDeleteUser = async (userId) => {
     setDeleting(true)
     try {
@@ -279,6 +307,40 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
                           {user.role}
                         </span>
 
+                        {!user.activo && (
+                          <span style={{
+                            fontSize: '0.65rem',
+                            fontWeight: '700',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(255, 100, 100, 0.1)',
+                            border: '1px solid rgba(255, 100, 100, 0.4)',
+                            color: '#ff6464',
+                          }}>INACTIVO</span>
+                        )}
+
+                        {!isConfirming && (
+                          <button
+                            onClick={() => openEditUser(user)}
+                            className="btn"
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.75rem',
+                              borderRadius: '6px',
+                              backgroundColor: 'transparent',
+                              border: '1px solid var(--border-color)',
+                              color: 'var(--text-main)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '0.95rem' }}>edit</span>
+                            Editar
+                          </button>
+                        )}
+
                         {!isSelf && !isConfirming && (
                           <button
                             onClick={() => setConfirmingDeleteId(user.id)}
@@ -390,6 +452,74 @@ function AdminUsers({ currentUser, onBackToPortal, onRefreshBookings, showToast 
           </div>
         )}
       </div>
+
+      {editingUser && (
+        <div className="modal-overlay" onClick={(e) => e.target.className === 'modal-overlay' && setEditingUser(null)}>
+          <div className="modal-drawer admin-form-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Editar usuario</h3>
+              <button type="button" className="icon-btn" onClick={() => setEditingUser(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="admin-form-grid">
+              <div className="form-group">
+                <label>Nombre completo</label>
+                <input
+                  type="text"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Teléfono</label>
+                <input
+                  type="text"
+                  value={editForm.telefono}
+                  onChange={(e) => setEditForm((f) => ({ ...f, telefono: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Rol</label>
+                <select
+                  value={editForm.role}
+                  onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))}
+                  disabled={editingUser.email === currentUser.email}
+                >
+                  <option value="cliente">Cliente</option>
+                  <option value="profesional">Profesional</option>
+                  <option value="administrador">Administrador</option>
+                </select>
+              </div>
+              <div className="form-group admin-form-check">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={editForm.activo}
+                    onChange={(e) => setEditForm((f) => ({ ...f, activo: e.target.checked }))}
+                    disabled={editingUser.email === currentUser.email}
+                  />
+                  Usuario activo
+                </label>
+              </div>
+            </div>
+            <div className="admin-form-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setEditingUser(null)}>Cancelar</button>
+              <button type="button" className="btn btn-primary" onClick={handleSaveUser} disabled={savingEdit}>
+                {savingEdit ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

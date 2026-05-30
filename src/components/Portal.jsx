@@ -32,11 +32,20 @@ function Portal({ currentUser, onViewChange }) {
           {
             id: 'catalog',
             title: 'Catálogo (Canchas / Profes / Users)',
-            description: 'Listar canchas, profesores y usuarios desde la API (auth, fields).',
+            description: 'ABM de canchas y consulta de profesores y usuarios.',
             icon: 'database',
             target: 'catalog',
-            badge: 'Desarrollo',
+            badge: 'Canchas',
             badgeColor: '#2ECC71',
+          },
+          {
+            id: 'admin_classes',
+            title: 'Gestión de Clases',
+            description: 'Crear, editar y eliminar clases de entrenamiento.',
+            icon: 'school',
+            target: 'admin_classes',
+            badge: 'Clases',
+            badgeColor: '#0070f3',
           },
           {
             id: 'admin_users',
@@ -49,8 +58,8 @@ function Portal({ currentUser, onViewChange }) {
           },
           {
             id: 'admin_finance',
-            title: 'Historial de Cobros',
-            description: 'Consultá cobros y recibos registrados (cierre de caja).',
+            title: 'Gestión financiera',
+            description: 'Cobros, recibos, descuentos y estados de pago. Usuarios/canchas: panel Django Admin.',
             icon: 'payments',
             target: 'admin_finance',
             badge: 'Finanzas',

@@ -13,6 +13,24 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   (import.meta.env.DEV ? '/api' : `${PROTOCOL}://${DOMAIN}:${PORT}/api`)
 const CSRF_STORAGE_KEY = `csrftoken:${API_URL}`
+const PAID_AMOUNTS_KEY = 'booking_paid_amounts'
+
+function getStoredPaidAmounts() {
+  try {
+    return JSON.parse(localStorage.getItem(PAID_AMOUNTS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function setStoredPaidAmount(bookingId, amount) {
+  const id = String(bookingId)
+  const paid = Number(amount)
+  if (!id || !(paid > 0)) return
+  const map = getStoredPaidAmounts()
+  map[id] = paid
+  localStorage.setItem(PAID_AMOUNTS_KEY, JSON.stringify(map))
+}
 
 /** Siempre false: conexión al backend Django (sesión + CSRF). */
 export const isMockMode = false
@@ -474,15 +492,65 @@ function mapDjangoCourt(c) {
   return {
     id: String(c.id),
     name: `Cancha #${c.numero}`,
+    numero: c.numero,
     tipoCancha: c.tipo_cancha || '',
     type: c.tipo_cancha?.replace('FUTBOL_', 'Fútbol ') || 'Cancha',
     turf: c.superficie?.replace(/_/g, ' ') || '',
+    rawSuperficie: c.superficie || 'CESPED_SINTETICO',
+    capacidad: Number(c.capacidad) || 0,
+    estadoDisponibilidad: c.estado_disponibilidad !== false,
+    activa: c.activa !== false,
     roofed: false,
     pricePerHour: Number(c.precio_base_hora) || 0,
     maxDurationMinutes: Number(c.duracion_maxima_reserva) || 120,
     rating: '—',
     icon: 'stadium',
     disponible: c.estado_disponibilidad !== false && c.activa !== false,
+  }
+}
+
+function mapRoleToDjango(role) {
+  if (role === 'administrador') return 'ADMINISTRADOR'
+  if (role === 'profesional') return 'PROFESOR'
+  return 'SOCIO'
+}
+
+function courtFormToPayload(form) {
+  return {
+    numero: Number(form.numero),
+    tipo_cancha: form.tipo_cancha || form.tipoCancha,
+    superficie: form.superficie || form.rawSuperficie || 'CESPED_SINTETICO',
+    capacidad: Number(form.capacidad) || 10,
+    estado_disponibilidad: form.estado_disponibilidad ?? form.estadoDisponibilidad !== false,
+    duracion_maxima_reserva: Number(form.duracion_maxima_reserva ?? form.maxDurationMinutes) || 120,
+    precio_base_hora: String(Number(form.precio_base_hora ?? form.pricePerHour) || 0),
+    activa: form.activa !== false,
+  }
+}
+
+function classFormToPayload(form) {
+  return {
+    profesor: Number(form.profesorId),
+    cancha: form.canchaId ? Number(form.canchaId) : null,
+    horario: Number(form.horarioMs),
+    maximo_alumnos: Number(form.maximo_alumnos ?? form.maxStudents) || 10,
+    tipo_clase: form.tipo_clase || 'FUTBOL',
+  }
+}
+
+function mapDjangoClassDetailed(clase, userMap = null) {
+  const base = mapDjangoClass(clase, userMap)
+  const horarioMs = Number(clase.horario)
+  const horarioDate = Number.isFinite(horarioMs) ? new Date(horarioMs) : null
+  return {
+    ...base,
+    profesorId: String(clase.profesor ?? ''),
+    canchaId: clase.cancha != null ? String(clase.cancha) : '',
+    tipoClase: clase.tipo_clase || 'FUTBOL',
+    horarioMs,
+    horarioInput: horarioDate
+      ? `${horarioDate.getFullYear()}-${String(horarioDate.getMonth() + 1).padStart(2, '0')}-${String(horarioDate.getDate()).padStart(2, '0')}T${String(horarioDate.getHours()).padStart(2, '0')}:${String(horarioDate.getMinutes()).padStart(2, '0')}`
+      : '',
   }
 }
 
@@ -498,27 +566,114 @@ function mapDjangoProfessor(p) {
   }
 }
 
-function mapStudentFromAsistencia(a) {
-  const firstName = (a.alumno_first_name || '').trim()
-  const lastName = (a.alumno_last_name || '').trim()
+function mapUserToStudentProfile(u) {
+  const firstName = (u.first_name || '').trim()
+  const lastName = (u.last_name || '').trim()
+  return {
+    firstName,
+    lastName,
+    name: [firstName, lastName].filter(Boolean).join(' ') || u.username || '',
+    email: u.email || '',
+  }
+}
+
+async function fetchUsersNameMap() {
+  const map = new Map()
+  try {
+    const data = await request('/auth/usuarios/')
+    const list = Array.isArray(data) ? data : data.results || []
+    for (const u of list) {
+      map.set(String(u.id), mapUserToStudentProfile(u))
+    }
+  } catch {
+    /* profesor puede no tener listado completo */
+  }
+  return map
+}
+
+async function enrichUsersNameMap(userMap, userIds) {
+  const missing = userIds.filter((id) => {
+    const profile = userMap.get(String(id))
+    return !profile?.name
+  })
+  await Promise.all(
+    missing.map(async (id) => {
+      try {
+        const u = await request(`/auth/usuarios/${id}/`)
+        userMap.set(String(id), mapUserToStudentProfile(u))
+      } catch {
+        /* sin permiso para ese usuario */
+      }
+    }),
+  )
+}
+
+async function resolveMissingStudentNames(students, userMap) {
+  const enriched = students.map((s) => {
+    const profile = userMap.get(String(s.id))
+    if (!profile) return s
+    return {
+      ...s,
+      firstName: s.firstName || profile.firstName,
+      lastName: s.lastName || profile.lastName,
+      name: s.name?.startsWith('Alumno ') ? profile.name : s.name || profile.name,
+      email: s.email || profile.email,
+    }
+  })
+
+  const missing = enriched.filter((s) => !s.firstName && !s.lastName && (s.name || '').startsWith('Alumno '))
+  await enrichUsersNameMap(
+    userMap,
+    missing.map((s) => s.id),
+  )
+  return enriched.map((s) => {
+    const profile = userMap.get(String(s.id))
+    if (!profile) return s
+    return {
+      ...s,
+      firstName: s.firstName || profile.firstName,
+      lastName: s.lastName || profile.lastName,
+      name: s.name?.startsWith('Alumno ') ? profile.name : s.name || profile.name,
+      email: s.email || profile.email,
+    }
+  })
+}
+
+function mapStudentFromAsistencia(a, userMap = null) {
+  const alumnoId = a.alumno?.id ?? a.alumno
+  const nested = typeof a.alumno === 'object' && a.alumno ? a.alumno : null
+
+  let firstName = (a.alumno_first_name || nested?.first_name || '').trim()
+  let lastName = (a.alumno_last_name || nested?.last_name || '').trim()
+  let email = a.alumno_email || nested?.email || ''
+
+  if (userMap && alumnoId != null) {
+    const profile = userMap.get(String(alumnoId))
+    if (profile) {
+      firstName = firstName || profile.firstName
+      lastName = lastName || profile.lastName
+      email = email || profile.email
+    }
+  }
+
   const fullName =
     [firstName, lastName].filter(Boolean).join(' ') ||
     (a.alumno_nombre || '').trim() ||
-    `Alumno ${a.alumno}`
+    (alumnoId != null ? `Alumno ${alumnoId}` : 'Alumno')
 
   return {
-    id: String(a.alumno ?? a.id),
+    id: String(alumnoId ?? a.id),
     asistenciaId: a.alumno != null ? String(a.id) : null,
     firstName,
     lastName,
     name: fullName,
-    email: a.alumno_email || '',
+    email,
     present: a.estado_asistencia === 'PRESENTE',
   }
 }
 
-function mapDjangoClass(clase) {
-  const students = (clase.asistencias || []).map(mapStudentFromAsistencia)
+function mapDjangoClass(clase, userMap = null) {
+  const students = (clase.asistencias || []).map((a) => mapStudentFromAsistencia(a, userMap))
 
   const horario = new Date(Number(clase.horario))
   return {
@@ -535,6 +690,94 @@ const PAYMENT_METHOD_MAP = {
   tarjeta: 'TARJETA_CREDITO',
   efectivo: 'EFECTIVO',
   transferencia: 'TRANSFERENCIA',
+}
+
+function mapDescuento(raw) {
+  const tipo = raw.tipo_descuento || 'PORCENTAJE'
+  const valor = Number(raw.porcentaje) || 0
+  const descripcion = (raw.descripcion || '').trim()
+  const label =
+    tipo === 'MONTO_FIJO'
+      ? `$${valor.toFixed(2)}${descripcion ? ` — ${descripcion}` : ''}`
+      : `${valor}%${descripcion ? ` — ${descripcion}` : ''}`
+  return {
+    id: String(raw.id),
+    tipo,
+    valor,
+    descripcion,
+    activo: raw.activo !== false,
+    label,
+  }
+}
+
+function buildPaidAmountByReserva(cobrosList) {
+  const map = new Map()
+  for (const c of cobrosList) {
+    if (!c.reserva || c.estado_pago !== 'APROBADO') continue
+    const rid = String(c.reserva)
+    const monto = Number(c.monto) || 0
+    if (monto > 0) map.set(rid, monto)
+  }
+  return map
+}
+
+export function applyDiscountToAmount(baseAmount, descuento) {
+  if (!descuento?.activo) return Number(baseAmount) || 0
+  const base = Number(baseAmount) || 0
+  if (descuento.tipo === 'MONTO_FIJO') {
+    return Math.max(0, Math.round((base - descuento.valor) * 100) / 100)
+  }
+  return Math.max(0, Math.round(base * (1 - descuento.valor / 100) * 100) / 100)
+}
+
+async function mapCobroFromApi(c, userMap, descuentosMap = new Map()) {
+  const profile = userMap.get(String(c.usuario)) || {}
+  const descuentoRawId =
+    c.descuento != null
+      ? String(typeof c.descuento === 'object' ? c.descuento.id : c.descuento)
+      : null
+  const descFromApi = c.descuento && typeof c.descuento === 'object' ? mapDescuento(c.descuento) : null
+  const descFromMap = descuentoRawId ? descuentosMap.get(descuentoRawId) : null
+  const descuento = descFromApi || descFromMap
+
+  return {
+    id: String(c.id),
+    usuarioId: String(c.usuario),
+    usuarioNombre: profile.name || '',
+    usuarioFirstName: profile.firstName || '',
+    usuarioLastName: profile.lastName || '',
+    usuarioEmail: c.usuario_email || profile.email || '',
+    monto: Number(c.monto) || 0,
+    metodoPago: c.metodo_pago || '',
+    estadoPago: c.estado_pago || '',
+    tipoServicio: c.tipo_servicio || '',
+    reservaId: c.reserva ? String(c.reserva) : null,
+    claseId: c.clase ? String(c.clase) : null,
+    competenciaId: c.competencia ? String(c.competencia) : null,
+    descuentoId: descuentoRawId,
+    descuentoLabel: descuento?.label || '',
+    fechaCobro: c.fecha_cobro,
+    reciboId: c.recibo?.id ?? c.recibo ?? null,
+    reciboDetalle: c.recibo?.detalle || '',
+    reciboFechaEmision: c.recibo?.fecha_emision || null,
+  }
+}
+
+async function mapReciboFromApi(r, cobrosById = new Map(), userMap = new Map()) {
+  const cobroId = String(typeof r.cobro === 'object' ? r.cobro?.id : r.cobro)
+  const cobro = cobrosById.get(cobroId)
+  const profile = cobro ? userMap.get(String(cobro.usuarioId)) : null
+  return {
+    id: String(r.id),
+    cobroId,
+    detalle: r.detalle || '',
+    fechaEmision: r.fecha_emision,
+    monto: cobro?.monto ?? (Number(r.cobro_monto) || 0),
+    metodoPago: cobro?.metodoPago || '',
+    tipoServicio: cobro?.tipoServicio || '',
+    usuarioNombre: cobro?.usuarioNombre || profile?.name || '',
+    usuarioEmail: cobro?.usuarioEmail || profile?.email || '',
+  }
 }
 
 export const api = {
@@ -660,12 +903,28 @@ export const api = {
     const data = await request('/bookings/reservas/')
     const list = Array.isArray(data) ? data : data.results || []
     let courts = []
+    let paidByReserva = new Map()
     try {
       courts = await api.getCourts()
     } catch {
       courts = []
     }
-    return list.map((r) => enrichBookingPrice(mapDjangoReserva(r), courts))
+    try {
+      const cobrosData = await request('/finance/cobros/')
+      const cobrosList = Array.isArray(cobrosData) ? cobrosData : cobrosData.results || []
+      paidByReserva = buildPaidAmountByReserva(cobrosList)
+    } catch {
+      /* cobros opcionales para clientes sin permiso */
+    }
+    const storedPaid = getStoredPaidAmounts()
+    return list.map((r) => {
+      const booking = enrichBookingPrice(mapDjangoReserva(r), courts)
+      const paid = paidByReserva.get(String(r.id)) ?? storedPaid[String(r.id)]
+      if (paid != null && paid > 0 && booking.status !== 'cancelled' && booking.status !== 'pending') {
+        return { ...booking, totalPrice: paid, paidAmount: paid }
+      }
+      return booking
+    })
   },
 
   /**
@@ -800,6 +1059,118 @@ export const api = {
     await request(`/bookings/reservas/${id}/`, { method: 'DELETE' })
   },
 
+  /** PATCH /api/bookings/reservas/{id}/ — editar reserva */
+  updateBooking: async (id, bookingData, previousBooking = null) => {
+    const userId = previousBooking?.userId || JSON.parse(localStorage.getItem('user_data') || '{}').id
+    const merged = { ...previousBooking, ...bookingData }
+    const payload = parseBookingToDjango(merged, userId)
+    const { usuario: _u, ...patchBody } = payload
+    const data = await request(`/bookings/reservas/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(patchBody),
+    })
+    const mapped = mapDjangoReserva(data)
+    return mergeBookingFromClient(mapped, merged)
+  },
+
+  /** GET /api/bookings/disponibilidad/?fecha=<epoch_ms> — calendario global */
+  getGlobalAvailability: async (dateStr) => {
+    const fecha = dateStringToEpochMs(dateStr)
+    if (!Number.isFinite(fecha)) {
+      throw new Error('Fecha inválida para consultar disponibilidad global.')
+    }
+    const data = await request(`/bookings/disponibilidad/?fecha=${fecha}`)
+    return Array.isArray(data) ? data : []
+  },
+
+  createCourt: async (form) => {
+    const data = await request('/fields/canchas/', {
+      method: 'POST',
+      body: JSON.stringify(courtFormToPayload(form)),
+    })
+    return mapDjangoCourt(data)
+  },
+
+  updateCourt: async (id, form) => {
+    const data = await request(`/fields/canchas/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(courtFormToPayload(form)),
+    })
+    return mapDjangoCourt(data)
+  },
+
+  deleteCourt: async (id) => {
+    await request(`/fields/canchas/${id}/`, { method: 'DELETE' })
+  },
+
+  createClass: async (form) => {
+    const userMap = await fetchUsersNameMap()
+    const data = await request('/bookings/clases/', {
+      method: 'POST',
+      body: JSON.stringify(classFormToPayload(form)),
+    })
+    return mapDjangoClassDetailed(data, userMap)
+  },
+
+  updateClass: async (id, form) => {
+    const userMap = await fetchUsersNameMap()
+    const data = await request(`/bookings/clases/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(classFormToPayload(form)),
+    })
+    return mapDjangoClassDetailed(data, userMap)
+  },
+
+  deleteClass: async (id) => {
+    await request(`/bookings/clases/${id}/`, { method: 'DELETE' })
+  },
+
+  getAllClasses: async () => {
+    const userMap = await fetchUsersNameMap()
+    const data = await request('/bookings/clases/')
+    const list = Array.isArray(data) ? data : data.results || []
+    return list.map((c) => mapDjangoClassDetailed(c, userMap))
+  },
+
+  /** GET /api/bookings/asistencia/ — historial de asistencias */
+  getAsistencias: async () => {
+    const [asistData, classData] = await Promise.all([
+      request('/bookings/asistencia/'),
+      request('/bookings/clases/'),
+    ])
+    const list = Array.isArray(asistData) ? asistData : asistData.results || []
+    const classes = Array.isArray(classData) ? classData : classData.results || []
+    const classMap = new Map(classes.map((c) => [String(c.id), c]))
+    const userMap = await fetchUsersNameMap()
+    await enrichUsersNameMap(
+      userMap,
+      list.map((a) => a.alumno?.id ?? a.alumno).filter(Boolean),
+    )
+    return list.map((a) => {
+      const cls = classMap.get(String(a.clase))
+      const student = mapStudentFromAsistencia(a, userMap)
+      const horarioMs = cls ? Number(cls.horario) : null
+      return {
+        id: String(a.id),
+        claseId: String(a.clase),
+        claseName: cls?.tipo_clase?.replace('_', ' ') || `Clase #${a.clase}`,
+        claseHorario: horarioMs,
+        claseHorarioLabel: horarioMs
+          ? new Date(horarioMs).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+          : '—',
+        alumnoId: student.id,
+        alumnoName: student.name,
+        alumnoEmail: student.email,
+        estado: a.estado_asistencia,
+        present: a.estado_asistencia === 'PRESENTE',
+        fechaRegistro: a.fecha,
+        fechaRegistroLabel: a.fecha
+          ? new Date(Number(a.fecha)).toLocaleString('es-AR')
+          : '—',
+      }
+    })
+  },
+
   adminGetUsers: async () => {
     const data = await request('/auth/usuarios/')
     const list = Array.isArray(data) ? data : data.results || []
@@ -808,7 +1179,39 @@ export const api = {
       name: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username,
       email: u.email,
       role: mapDjangoRole(u.rol),
+      rol: u.rol,
+      activo: u.activo !== false,
+      telefono: u.telefono || '',
+      direccion: u.direccion || '',
     }))
+  },
+
+  adminUpdateUser: async (id, patch) => {
+    const body = {}
+    if (patch.name != null) {
+      const parts = String(patch.name).trim().split(/\s+/)
+      body.first_name = parts[0] || ''
+      body.last_name = parts.slice(1).join(' ') || ' '
+    }
+    if (patch.email != null) body.email = patch.email
+    if (patch.telefono != null) body.telefono = patch.telefono
+    if (patch.direccion != null) body.direccion = patch.direccion
+    if (patch.role != null) body.rol = mapRoleToDjango(patch.role)
+    if (patch.activo != null) body.activo = Boolean(patch.activo)
+    const data = await request(`/auth/usuarios/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    return {
+      id: String(data.id),
+      name: `${data.first_name || ''} ${data.last_name || ''}`.trim() || data.username,
+      email: data.email,
+      role: mapDjangoRole(data.rol),
+      rol: data.rol,
+      activo: data.activo !== false,
+      telefono: data.telefono || '',
+      direccion: data.direccion || '',
+    }
   },
 
   adminDeleteUser: async (id) => {
@@ -834,15 +1237,25 @@ export const api = {
     return formatted
   },
 
-  processPayment: async (bookingId, method, bookingFromUI = null) => {
+  processPayment: async (bookingId, method, bookingFromUI = null, descuentoId = null) => {
     const user = JSON.parse(localStorage.getItem('user_data') || '{}')
     const bookings = await api.getBookings()
     const booking =
       bookingFromUI ||
       bookings.find((b) => b.id === String(bookingId))
-    const monto = Number(booking?.totalPrice) || 0
+    let monto = Number(booking?.totalPrice) || 0
     if (monto <= 0) {
       throw new Error('No se pudo determinar el monto de la reserva. Volvé a cargar la página.')
+    }
+
+    let descuentoPayload = null
+    if (descuentoId) {
+      const descuentos = await api.getDescuentos()
+      const desc = descuentos.find((d) => d.id === String(descuentoId) && d.activo)
+      if (desc) {
+        descuentoPayload = Number(desc.id)
+        monto = applyDiscountToAmount(monto, desc)
+      }
     }
 
     const cobro = await request('/finance/cobros/', {
@@ -854,6 +1267,7 @@ export const api = {
         monto,
         metodo_pago: PAYMENT_METHOD_MAP[method] || 'EFECTIVO',
         estado_pago: 'PENDIENTE',
+        ...(descuentoPayload ? { descuento: descuentoPayload } : {}),
       }),
     })
 
@@ -862,8 +1276,10 @@ export const api = {
       body: JSON.stringify({ estado_pago: 'APROBADO' }),
     })
 
-    const updatedBooking = await api.updateBookingStatus(bookingId, 'confirmed', booking)
-    const confirmedBooking = { ...updatedBooking, status: 'confirmed' }
+    const bookingWithPrice = { ...booking, totalPrice: monto, paidAmount: monto }
+    const updatedBooking = await api.updateBookingStatus(bookingId, 'confirmed', bookingWithPrice)
+    const confirmedBooking = { ...updatedBooking, status: 'confirmed', totalPrice: monto, paidAmount: monto }
+    setStoredPaidAmount(bookingId, monto)
 
     let reciboApi = null
     const reciboId = approved.recibo?.id ?? approved.recibo
@@ -897,40 +1313,128 @@ export const api = {
   },
 
   getCobros: async () => {
+    const userMap = await fetchUsersNameMap()
+    const descuentos = await api.getDescuentos().catch(() => [])
+    const descuentosMap = new Map(descuentos.map((d) => [d.id, d]))
     const data = await request('/finance/cobros/')
     const list = Array.isArray(data) ? data : data.results || []
-    return list.map((c) => ({
-      id: String(c.id),
-      usuarioId: String(c.usuario),
-      usuarioEmail: c.usuario_email || '',
-      monto: Number(c.monto) || 0,
-      metodoPago: c.metodo_pago || '',
-      estadoPago: c.estado_pago || '',
-      tipoServicio: c.tipo_servicio || '',
-      reservaId: c.reserva ? String(c.reserva) : null,
-      fechaCobro: c.fecha_cobro,
-      reciboId: c.recibo?.id ?? c.recibo ?? null,
-    }))
+    const userIds = [...new Set(list.map((c) => c.usuario).filter((id) => id != null))]
+    await enrichUsersNameMap(userMap, userIds)
+    return Promise.all(list.map((c) => mapCobroFromApi(c, userMap, descuentosMap)))
+  },
+
+  getCobro: async (id) => {
+    const userMap = await fetchUsersNameMap()
+    const descuentos = await api.getDescuentos().catch(() => [])
+    const descuentosMap = new Map(descuentos.map((d) => [d.id, d]))
+    const data = await request(`/finance/cobros/${id}/`)
+    await enrichUsersNameMap(userMap, [data.usuario])
+    return mapCobroFromApi(data, userMap, descuentosMap)
+  },
+
+  updateCobro: async (id, patch) => {
+    const body = {}
+    if (patch.estadoPago != null) body.estado_pago = patch.estadoPago
+    if (patch.metodoPago != null) body.metodo_pago = patch.metodoPago
+    if (patch.monto != null) body.monto = patch.monto
+    if (patch.descuentoId !== undefined) {
+      body.descuento = patch.descuentoId ? Number(patch.descuentoId) : null
+    }
+    const data = await request(`/finance/cobros/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    return api.getCobro(data.id ?? id)
+  },
+
+  deleteCobro: async (id) => {
+    await request(`/finance/cobros/${id}/`, { method: 'DELETE' })
+  },
+
+  getRecibos: async () => {
+    const [recibosRaw, cobros] = await Promise.all([
+      request('/finance/recibos/').then((d) => (Array.isArray(d) ? d : d.results || [])),
+      api.getCobros(),
+    ])
+    const cobrosById = new Map(cobros.map((c) => [c.id, c]))
+    const userMap = await fetchUsersNameMap()
+    return Promise.all(recibosRaw.map((r) => mapReciboFromApi(r, cobrosById, userMap)))
   },
 
   getRecibo: async (id) => {
     const data = await request(`/finance/recibos/${id}/`)
+    const cobroId = typeof data.cobro === 'object' ? data.cobro?.id : data.cobro
+    let cobro = null
+    if (cobroId) {
+      try {
+        cobro = await api.getCobro(cobroId)
+      } catch {
+        cobro = null
+      }
+    }
     return {
-      id: data.id,
+      id: String(data.id),
       detalle: data.detalle || '',
       fecha_emision: data.fecha_emision,
-      cobro: data.cobro,
-      cobro_monto: data.cobro_monto,
+      cobroId: cobroId ? String(cobroId) : null,
+      cobro_monto: cobro?.monto ?? (Number(data.cobro_monto) || 0),
+      metodoPago: cobro?.metodoPago || '',
+      tipoServicio: cobro?.tipoServicio || '',
+      usuarioNombre: cobro?.usuarioNombre || '',
+      usuarioEmail: cobro?.usuarioEmail || '',
     }
   },
 
+  getDescuentos: async () => {
+    const data = await request('/finance/descuentos/')
+    const list = Array.isArray(data) ? data : data.results || []
+    return list.map(mapDescuento)
+  },
+
+  createDescuento: async (payload) => {
+    const data = await request('/finance/descuentos/', {
+      method: 'POST',
+      body: JSON.stringify({
+        tipo_descuento: payload.tipo,
+        porcentaje: payload.valor,
+        descripcion: payload.descripcion || '',
+        activo: payload.activo !== false,
+      }),
+    })
+    return mapDescuento(data)
+  },
+
+  updateDescuento: async (id, payload) => {
+    const body = {}
+    if (payload.tipo != null) body.tipo_descuento = payload.tipo
+    if (payload.valor != null) body.porcentaje = payload.valor
+    if (payload.descripcion != null) body.descripcion = payload.descripcion
+    if (payload.activo != null) body.activo = payload.activo
+    const data = await request(`/finance/descuentos/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    return mapDescuento(data)
+  },
+
+  deleteDescuento: async (id) => {
+    await request(`/finance/descuentos/${id}/`, { method: 'DELETE' })
+  },
+
   getClasses: async (professorId = null) => {
+    const userMap = await fetchUsersNameMap()
     const data = await request('/bookings/clases/')
     let list = Array.isArray(data) ? data : data.results || []
     if (professorId != null) {
       list = list.filter((c) => String(c.profesor) === String(professorId))
     }
-    return list.map(mapDjangoClass)
+    const mapped = list.map((c) => mapDjangoClass(c, userMap))
+    return Promise.all(
+      mapped.map(async (cls) => ({
+        ...cls,
+        students: await resolveMissingStudentNames(cls.students, userMap),
+      })),
+    )
   },
 
   saveAttendance: async (classId, students) => {
