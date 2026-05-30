@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
-import { api } from '../services/api.js'
+import React, { useState, useEffect } from 'react'
+import { api, applyDiscountToAmount } from '../services/api.js'
+import { printReceipt } from '../utils/printReceipt.js'
 
 const METHODS = [
   { id: 'tarjeta', label: 'Tarjeta débito/crédito', icon: 'credit_card' },
@@ -11,6 +12,26 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
   const [method, setMethod] = useState('tarjeta')
   const [processing, setProcessing] = useState(false)
   const [receipt, setReceipt] = useState(null)
+  const [descuentos, setDescuentos] = useState([])
+  const [selectedDescuentoId, setSelectedDescuentoId] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    api.getDescuentos()
+      .then((list) => {
+        if (!cancelled) setDescuentos(list.filter((d) => d.activo))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [booking?.id])
+
+  const selectedDescuento = descuentos.find((d) => d.id === selectedDescuentoId) || null
+  const basePrice = Number(booking?.totalPrice) || 0
+  const finalPrice = selectedDescuento
+    ? applyDiscountToAmount(basePrice, selectedDescuento)
+    : basePrice
 
   if (!booking) return null
 
@@ -29,7 +50,12 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
   const handlePay = async () => {
     setProcessing(true)
     try {
-      const result = await api.processPayment(booking.id, method, booking)
+      const result = await api.processPayment(
+        booking.id,
+        method,
+        booking,
+        selectedDescuentoId || null,
+      )
       setReceipt(result.recibo)
       onPaymentSuccess(result)
       showToast?.('Pago aprobado. Reserva confirmada.', 'success')
@@ -83,9 +109,35 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
               </div>
               <div className="payment-summary-row total">
                 <span>Total a pagar</span>
-                <strong>${Number(booking.totalPrice || 0).toFixed(2)}</strong>
+                <strong>${finalPrice.toFixed(2)}</strong>
               </div>
+              {selectedDescuento && finalPrice < basePrice && (
+                <div className="payment-summary-row" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  <span>Descuento aplicado</span>
+                  <span>- ${(basePrice - finalPrice).toFixed(2)} ({selectedDescuento.label})</span>
+                </div>
+              )}
             </div>
+
+            {descuentos.length > 0 && (
+              <>
+                <label className="payment-methods-label" htmlFor="payment-discount">
+                  Descuento (opcional)
+                </label>
+                <select
+                  id="payment-discount"
+                  value={selectedDescuentoId}
+                  onChange={(e) => setSelectedDescuentoId(e.target.value)}
+                  className="bookings-sort-select"
+                  style={{ width: '100%', marginBottom: '1rem' }}
+                >
+                  <option value="">Sin descuento</option>
+                  {descuentos.map((d) => (
+                    <option key={d.id} value={d.id}>{d.label}</option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <label className="payment-methods-label">Método de pago</label>
             <div className="payment-methods">
@@ -113,16 +165,17 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
           </>
         ) : (
           <>
-            <div className="payment-modal-header receipt-header">
-              <span className="material-symbols-outlined payment-icon success">check_circle</span>
-              <h3>Recibo de pago</h3>
-              <p>
-                Recibo Nº {receipt.numero}
-                {receipt.cobroId ? ` · Cobro #${receipt.cobroId}` : ''}
-              </p>
-            </div>
+            <div className="recibo-print-root">
+              <div className="payment-modal-header receipt-header">
+                <span className="material-symbols-outlined payment-icon success no-print">check_circle</span>
+                <h3>Recibo de pago</h3>
+                <p>
+                  Recibo Nº {receipt.numero}
+                  {receipt.cobroId ? ` · Cobro #${receipt.cobroId}` : ''}
+                </p>
+              </div>
 
-            <div className="receipt-body">
+              <div className="receipt-body">
               <div className="receipt-brand">GOL AHORA</div>
               {receipt.detalle && (
                 <div className="receipt-line">
@@ -153,13 +206,14 @@ function PaymentModal({ booking, currentUser, onClose, onPaymentSuccess, showToa
                 <strong>${Number(receipt.monto).toFixed(2)}</strong>
               </div>
               <p className="receipt-legal">Comprobante válido como constancia de pago digital.</p>
+              </div>
             </div>
 
-            <div className="payment-modal-footer">
+            <div className="payment-modal-footer no-print">
               <button
                 type="button"
                 className="btn btn-outline"
-                onClick={() => window.print()}
+                onClick={() => printReceipt()}
               >
                 <span className="material-symbols-outlined">print</span>
                 Imprimir

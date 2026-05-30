@@ -11,6 +11,7 @@ import {
   bookingsOverlap,
   isSlotBlockingStatus,
 } from '../utils/bookingRules.js'
+import { canBookOnDate } from '../utils/clubConfig.js'
 
 const COURT_TYPE_FILTERS = [
   { value: '', label: 'Todos los deportes' },
@@ -164,6 +165,12 @@ function BookingDrawer({
     }
     if (!selectedCourt || !selectedDate || !selectedTimeSlot) {
       alert('Por favor, selecciona un horario disponible')
+      return
+    }
+    const datePolicy = canBookOnDate(selectedDate)
+    if (!datePolicy.ok) {
+      if (showToast) showToast(datePolicy.reason, 'error')
+      else alert(datePolicy.reason)
       return
     }
     if (!canUseDuration(durationHours)) {

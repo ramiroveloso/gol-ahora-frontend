@@ -10,13 +10,32 @@ const COURT_TYPE_FILTERS = [
   { value: 'TENIS', label: 'Tenis' },
 ]
 
+const TIPO_CANCHA_OPTIONS = COURT_TYPE_FILTERS.filter((o) => o.value)
+const SUPERFICIE_OPTIONS = [
+  { value: 'CESPED_SINTETICO', label: 'Césped sintético' },
+  { value: 'CESPED_NATURAL', label: 'Césped natural' },
+  { value: 'CEMENTO', label: 'Cemento' },
+  { value: 'POLVO_LADRILLO', label: 'Polvo de ladrillo' },
+]
+
 const TABS = [
   { id: 'courts', label: 'Canchas', icon: 'stadium' },
   { id: 'professors', label: 'Profesores', icon: 'school' },
   { id: 'users', label: 'Usuarios', icon: 'groups' },
 ]
 
-function CatalogExplorer({ onBackToPortal, showToast }) {
+const EMPTY_COURT = {
+  numero: '',
+  tipo_cancha: 'FUTBOL_5',
+  superficie: 'CESPED_SINTETICO',
+  capacidad: '10',
+  precio_base_hora: '',
+  duracion_maxima_reserva: '120',
+  estado_disponibilidad: true,
+  activa: true,
+}
+
+function CatalogExplorer({ onBackToPortal, showToast, onCourtsChanged }) {
   const [tab, setTab] = useState('courts')
   const [courts, setCourts] = useState([])
   const [professors, setProfessors] = useState([])
@@ -24,6 +43,10 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [courtTipoFilter, setCourtTipoFilter] = useState('')
+  const [courtModal, setCourtModal] = useState(null)
+  const [courtForm, setCourtForm] = useState(EMPTY_COURT)
+  const [saving, setSaving] = useState(false)
+  const [confirmDeleteCourtId, setConfirmDeleteCourtId] = useState(null)
 
   const loadAll = async (tipoCancha = courtTipoFilter) => {
     setLoading(true)
@@ -51,70 +74,111 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
     if (tab === 'courts') loadAll(courtTipoFilter)
   }, [courtTipoFilter])
 
+  const openCreateCourt = () => {
+    setCourtForm({ ...EMPTY_COURT })
+    setCourtModal({ mode: 'create' })
+  }
+
+  const openEditCourt = (c) => {
+    setCourtForm({
+      numero: String(c.numero ?? c.id),
+      tipo_cancha: c.tipoCancha || 'FUTBOL_5',
+      superficie: c.rawSuperficie || 'CESPED_SINTETICO',
+      capacidad: String(c.capacidad || 10),
+      precio_base_hora: String(c.pricePerHour || ''),
+      duracion_maxima_reserva: String(c.maxDurationMinutes || 120),
+      estado_disponibilidad: c.estadoDisponibilidad !== false,
+      activa: c.activa !== false,
+    })
+    setCourtModal({ mode: 'edit', id: c.id })
+  }
+
+  const handleSaveCourt = async () => {
+    if (!courtForm.numero || !courtForm.precio_base_hora) {
+      showToast('Completá número y precio por hora.', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      if (courtModal.mode === 'create') {
+        await api.createCourt(courtForm)
+        showToast('Cancha creada.', 'success')
+      } else {
+        await api.updateCourt(courtModal.id, courtForm)
+        showToast('Cancha actualizada.', 'success')
+      }
+      setCourtModal(null)
+      await loadAll(courtTipoFilter)
+      onCourtsChanged?.()
+    } catch (err) {
+      showToast(err.message || 'No se pudo guardar la cancha', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteCourt = async (id) => {
+    setSaving(true)
+    try {
+      await api.deleteCourt(id)
+      showToast('Cancha eliminada.', 'info')
+      setConfirmDeleteCourtId(null)
+      await loadAll(courtTipoFilter)
+      onCourtsChanged?.()
+    } catch (err) {
+      showToast(err.message || 'No se pudo eliminar', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const q = search.toLowerCase()
 
   const filteredCourts = courts.filter(
     (c) =>
       c.name?.toLowerCase().includes(q) ||
       c.type?.toLowerCase().includes(q) ||
-      c.turf?.toLowerCase().includes(q)
+      c.turf?.toLowerCase().includes(q),
   )
 
   const filteredProfessors = professors.filter(
     (p) =>
       p.name?.toLowerCase().includes(q) ||
       p.email?.toLowerCase().includes(q) ||
-      p.certificacion?.toLowerCase().includes(q)
+      p.certificacion?.toLowerCase().includes(q),
   )
 
   const filteredUsers = users.filter(
     (u) =>
       u.name?.toLowerCase().includes(q) ||
       u.email?.toLowerCase().includes(q) ||
-      u.role?.toLowerCase().includes(q)
+      u.role?.toLowerCase().includes(q),
   )
 
   return (
-    <div style={{ maxWidth: '950px', margin: '2rem auto', padding: '0 1.5rem', fontFamily: 'Outfit, sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <button
-          type="button"
-          onClick={onBackToPortal}
-          className="btn"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            backgroundColor: 'transparent',
-            border: '1px solid var(--border-color)',
-            color: 'var(--text-muted)',
-            padding: '0.5rem 0.8rem',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontSize: '0.85rem',
-          }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>arrow_back</span>
+    <div className="admin-page">
+      <div className="admin-page-top">
+        <button type="button" className="btn btn-outline" onClick={onBackToPortal}>
+          <span className="material-symbols-outlined">arrow_back</span>
           Volver al Portal
         </button>
+        {tab === 'courts' && (
+          <button type="button" className="btn btn-primary" onClick={openCreateCourt}>
+            <span className="material-symbols-outlined">add</span>
+            Nueva cancha
+          </button>
+        )}
       </div>
 
-      <div
-        style={{
-          backgroundColor: 'var(--bg-card)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '16px',
-          padding: '2rem',
-        }}
-      >
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.5rem', fontWeight: 800 }}>Catálogo del sistema</h2>
-        <p style={{ margin: '0 0 1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-          Listados desde la API: canchas, profesores y usuarios.
+      <div className="admin-card">
+        <h2>Catálogo del sistema</h2>
+        <p className="admin-card-desc">
+          Consulta y gestión de canchas. Profesores y usuarios en modo consulta.
         </p>
 
         {tab === 'courts' && (
           <div className="form-group" style={{ marginBottom: '1rem', maxWidth: 280 }}>
-            <label htmlFor="catalog-court-filter">Tipo de cancha (API)</label>
+            <label htmlFor="catalog-court-filter">Tipo de cancha</label>
             <select
               id="catalog-court-filter"
               value={courtTipoFilter}
@@ -123,35 +187,21 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
               style={{ width: '100%' }}
             >
               {COURT_TYPE_FILTERS.map((o) => (
-                <option key={o.value || 'all'} value={o.value}>
-                  {o.label}
-                </option>
+                <option key={o.value || 'all'} value={o.value}>{o.label}</option>
               ))}
             </select>
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <div className="admin-tabs">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
+              className={`admin-tab ${tab === t.id ? 'active' : ''}`}
               onClick={() => setTab(t.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                padding: '0.45rem 0.9rem',
-                borderRadius: '8px',
-                border: tab === t.id ? '1px solid #2ECC71' : '1px solid var(--border-color)',
-                backgroundColor: tab === t.id ? 'rgba(46, 204, 113, 0.12)' : 'transparent',
-                color: tab === t.id ? '#2ECC71' : 'var(--text-muted)',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-              }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>{t.icon}</span>
+              <span className="material-symbols-outlined">{t.icon}</span>
               {t.label}
             </button>
           ))}
@@ -159,112 +209,195 @@ function CatalogExplorer({ onBackToPortal, showToast }) {
 
         <input
           type="search"
+          className="admin-search"
           placeholder="Buscar..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{
-            width: '100%',
-            marginBottom: '1.25rem',
-            padding: '0.6rem 1rem',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)',
-            background: 'transparent',
-            color: 'var(--text-main)',
-          }}
         />
 
         {loading ? (
-          <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>Cargando catálogo...</p>
+          <p className="admin-muted">Cargando catálogo...</p>
         ) : (
           <>
             {tab === 'courts' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div className="admin-list">
                 {filteredCourts.map((c) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      padding: '1rem 1.2rem',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: '0.5rem',
-                    }}
-                  >
+                  <div key={c.id} className="admin-list-item">
                     <div>
                       <strong>{c.name}</strong>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {c.type} · {c.turf} · ${c.pricePerHour}/h
+                      <div className="admin-list-meta">
+                        {c.type} · {c.turf} · ${c.pricePerHour}/h · cap. {c.capacidad}
                       </div>
                     </div>
-                    <span
-                      style={{
-                        fontSize: '0.7rem',
-                        fontWeight: 700,
-                        color: c.disponible !== false ? '#2ECC71' : 'var(--text-muted)',
-                      }}
-                    >
-                      {c.disponible !== false ? 'DISPONIBLE' : 'NO DISPONIBLE'}
-                    </span>
+                    <div className="admin-list-actions">
+                      <span className={`admin-badge ${c.disponible !== false ? 'ok' : 'muted'}`}>
+                        {c.disponible !== false ? 'DISPONIBLE' : 'NO DISPONIBLE'}
+                      </span>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={() => openEditCourt(c)}>
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm btn-danger"
+                        onClick={() => setConfirmDeleteCourtId(c.id)}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
                   </div>
                 ))}
-                {filteredCourts.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Sin resultados.</p>}
+                {filteredCourts.length === 0 && <p className="admin-muted">Sin resultados.</p>}
               </div>
             )}
 
             {tab === 'professors' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div className="admin-list">
                 {filteredProfessors.map((p) => (
-                  <div
-                    key={p.id}
-                    style={{
-                      padding: '1rem 1.2rem',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '10px',
-                    }}
-                  >
-                    <strong>{p.name}</strong>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{p.email}</div>
-                    <div style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                      {p.certificacion} · {p.alumnosCount} alumnos
+                  <div key={p.id} className="admin-list-item">
+                    <div>
+                      <strong>{p.name}</strong>
+                      <div className="admin-list-meta">{p.email}</div>
+                      <div className="admin-list-meta">{p.certificacion} · {p.alumnosCount} alumnos</div>
                     </div>
                   </div>
                 ))}
-                {filteredProfessors.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Sin resultados.</p>}
+                {filteredProfessors.length === 0 && <p className="admin-muted">Sin resultados.</p>}
               </div>
             )}
 
             {tab === 'users' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div className="admin-list">
                 {filteredUsers.map((u) => (
-                  <div
-                    key={u.id}
-                    style={{
-                      padding: '1rem 1.2rem',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
+                  <div key={u.id} className="admin-list-item">
                     <div>
                       <strong>{u.name}</strong>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                      <div className="admin-list-meta">{u.email}</div>
                     </div>
-                    <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#2ECC71', textTransform: 'uppercase' }}>
-                      {u.role}
-                    </span>
+                    <span className="admin-badge ok">{u.role}</span>
                   </div>
                 ))}
-                {filteredUsers.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Sin resultados.</p>}
+                {filteredUsers.length === 0 && <p className="admin-muted">Sin resultados.</p>}
               </div>
             )}
           </>
         )}
       </div>
+
+      {courtModal && (
+        <div className="modal-overlay" onClick={(e) => e.target.className === 'modal-overlay' && setCourtModal(null)}>
+          <div className="modal-drawer admin-form-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{courtModal.mode === 'create' ? 'Nueva cancha' : 'Editar cancha'}</h3>
+              <button type="button" className="icon-btn" onClick={() => setCourtModal(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="admin-form-grid">
+              <div className="form-group">
+                <label>Número</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={courtForm.numero}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, numero: e.target.value }))}
+                  disabled={courtModal.mode === 'edit'}
+                />
+              </div>
+              <div className="form-group">
+                <label>Tipo</label>
+                <select
+                  value={courtForm.tipo_cancha}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, tipo_cancha: e.target.value }))}
+                >
+                  {TIPO_CANCHA_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Superficie</label>
+                <select
+                  value={courtForm.superficie}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, superficie: e.target.value }))}
+                >
+                  {SUPERFICIE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Capacidad</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={courtForm.capacidad}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, capacidad: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Precio / hora ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={courtForm.precio_base_hora}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, precio_base_hora: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Duración máx. (min)</label>
+                <input
+                  type="number"
+                  min="30"
+                  step="30"
+                  value={courtForm.duracion_maxima_reserva}
+                  onChange={(e) => setCourtForm((f) => ({ ...f, duracion_maxima_reserva: e.target.value }))}
+                />
+              </div>
+              <div className="form-group admin-form-check">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={courtForm.estado_disponibilidad}
+                    onChange={(e) => setCourtForm((f) => ({ ...f, estado_disponibilidad: e.target.checked }))}
+                  />
+                  Disponible para reservas
+                </label>
+              </div>
+              <div className="form-group admin-form-check">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={courtForm.activa}
+                    onChange={(e) => setCourtForm((f) => ({ ...f, activa: e.target.checked }))}
+                  />
+                  Activa (no dada de baja)
+                </label>
+              </div>
+            </div>
+            <div className="admin-form-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setCourtModal(null)}>Cancelar</button>
+              <button type="button" className="btn btn-primary" onClick={handleSaveCourt} disabled={saving}>
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteCourtId && (
+        <div className="modal-overlay" onClick={(e) => e.target.className === 'modal-overlay' && setConfirmDeleteCourtId(null)}>
+          <div className="modal-drawer admin-form-modal" onClick={(e) => e.stopPropagation()}>
+            <p>¿Eliminar la cancha #{confirmDeleteCourtId}? Esta acción no se puede deshacer.</p>
+            <div className="admin-form-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setConfirmDeleteCourtId(null)}>Cancelar</button>
+              <button type="button" className="btn btn-primary btn-danger" onClick={() => handleDeleteCourt(confirmDeleteCourtId)} disabled={saving}>
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

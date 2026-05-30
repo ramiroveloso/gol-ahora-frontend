@@ -10,6 +10,7 @@ import Competitions from './components/Competitions.jsx'
 import AdminUsers from './components/AdminUsers.jsx'
 import AdminCalendar from './components/AdminCalendar.jsx'
 import AdminFinance from './components/AdminFinance.jsx'
+import AdminClasses from './components/AdminClasses.jsx'
 import CatalogExplorer from './components/CatalogExplorer.jsx'
 import ProfileModal from './components/ProfileModal.jsx'
 import PaymentModal from './components/PaymentModal.jsx'
@@ -20,6 +21,7 @@ import {
   shouldAutoCancelUnpaid,
   filterBookingsForUser,
 } from './utils/bookingRules.js'
+import { canCancelWithoutPenalty } from './utils/clubConfig.js'
 
 export const TIME_SLOTS = [
   '08:00 - 09:00', '09:00 - 10:00', '10:00 - 11:00', '11:00 - 12:00',
@@ -173,17 +175,39 @@ function App() {
     }
   }
 
-  const handleCancelBooking = async (bookingId) => {
+  const handleRefreshCourts = async () => {
     try {
-      const previous = bookings.find((b) => b.id === bookingId)
+      const data = await api.getCourts()
+      if (data.length) setCourts(data)
+    } catch {
+      /* mantener catálogo en caché */
+    }
+  }
+
+  const handleCancelBooking = async (bookingId, previousBooking = null) => {
+    try {
+      const previous = previousBooking || bookings.find((b) => b.id === bookingId)
+      const policy = canCancelWithoutPenalty(previous)
       const updated = await api.cancelBooking(bookingId, previous)
       setBookings((prev) =>
         prev.map((b) => (b.id === bookingId ? { ...updated, status: 'cancelled', totalPrice: 0 } : b)),
       )
-      showToast('Reserva cancelada. El horario quedó liberado.', 'info')
+      if (!policy.withinPolicy) {
+        showToast(policy.message || 'Cancelación fuera de plazo.', 'error')
+      } else {
+        showToast('Reserva cancelada. El horario quedó liberado.', 'info')
+      }
     } catch (err) {
       showToast(err.message || 'Error al cancelar la reserva', 'error')
+      throw err
     }
+  }
+
+  const handleUpdateBooking = async (id, patch, previousBooking = null) => {
+    const previous = previousBooking || bookings.find((b) => b.id === id)
+    const updated = await api.updateBooking(id, patch, previous)
+    setBookings((prev) => prev.map((b) => (b.id === id ? updated : b)))
+    return updated
   }
 
   const handleDeleteBooking = async (bookingId) => {
@@ -220,11 +244,27 @@ function App() {
   }
 
   const handlePaymentSuccess = async ({ booking }) => {
-    const confirmed = { ...booking, status: 'confirmed' }
+    const paidPrice = Number(booking?.totalPrice ?? booking?.paidAmount) || null
+    const confirmed = {
+      ...booking,
+      status: 'confirmed',
+      ...(paidPrice != null ? { totalPrice: paidPrice, paidAmount: paidPrice } : {}),
+    }
     setBookings((prev) => prev.map((b) => (b.id === confirmed.id ? confirmed : b)))
     setPaymentBooking(null)
     try {
-      await handleRefreshBookings()
+      const fresh = await api.getBookings()
+      setBookings((prev) => {
+        const paidById = new Map(prev.map((b) => [b.id, b.paidAmount ?? b.totalPrice]))
+        return fresh.map((b) => {
+          if (b.id !== confirmed.id) return b
+          const paid = paidPrice ?? paidById.get(b.id)
+          if (paid != null && paid > 0) {
+            return { ...b, totalPrice: paid, paidAmount: paid }
+          }
+          return b
+        })
+      })
     } catch {
       /* la reserva confirmada ya quedó en estado local */
     }
@@ -326,6 +366,13 @@ function App() {
               <CatalogExplorer
                 onBackToPortal={() => setCurrentView('portal')}
                 showToast={showToast}
+                onCourtsChanged={handleRefreshCourts}
+              />
+            )}
+            {currentView === 'admin_classes' && (
+              <AdminClasses
+                onBackToPortal={() => setCurrentView('portal')}
+                showToast={showToast}
               />
             )}
             {currentView === 'admin_finance' && (
@@ -338,7 +385,11 @@ function App() {
               <AdminCalendar
                 bookings={bookings}
                 courts={courts}
+                currentUser={currentUser}
                 onDeleteBooking={handleDeleteBooking}
+                onCancelBooking={handleCancelBooking}
+                onUpdateBooking={handleUpdateBooking}
+                onRefreshBookings={handleRefreshBookings}
                 onBackToPortal={() => setCurrentView('portal')}
                 showToast={showToast}
               />
